@@ -30,15 +30,15 @@ class lin_op:
         self.ind0=np.zeros([0], dtype=int)
         self.TOC={'rows':dict(),'cols':dict()}
         self.grid=grid
-        
+
     def diff_op(self, delta_subs, vals,  which_nodes=None):
-        # build an operator that calculates linear combination of the surrounding 
+        # build an operator that calculates linear combination of the surrounding
         # values at each node of a grid.
-        # A template, given by delta_subs and vals contains a list of offsets 
-        # in each direction of the grid, and a list of values corresponding 
-        # to each offset.  Only those nodes for which the template falls 
+        # A template, given by delta_subs and vals contains a list of offsets
+        # in each direction of the grid, and a list of values corresponding
+        # to each offset.  Only those nodes for which the template falls
         # entirely inside the grid are included in the operator
-     
+
         # compute the maximum and minimum offset in each dimension
         max_deltas=[np.max(delta_sub) for delta_sub in delta_subs]
         min_deltas=[np.min(delta_sub) for delta_sub in delta_subs]
@@ -59,7 +59,7 @@ class lin_op:
             this_sub=[sub0+delta[ii] for sub0, delta in zip(sub0s, delta_subs)]
             self.r[:,ii]=self.row_0+np.arange(0, self.N_eq, dtype=int)
             self.c[:,ii]=self.grid.global_ind(this_sub)
-            self.v[:,ii]=vals[ii]        
+            self.v[:,ii]=vals[ii]
         self.ind0=self.grid.global_ind(sub0s).ravel()
         self.TOC['rows']={self.name:range(self.N_eq)}
         self.TOC['cols']={self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
@@ -67,7 +67,7 @@ class lin_op:
 
     def add(self, op):
         # combine a set of operators into a composite operator by adding them.
-        # the same thing could be accomplished by converting the operators to 
+        # the same thing could be accomplished by converting the operators to
         # sparse arrays and adding the arrays, but this method keeps track of the
         # table of contents for the operators.
         # if a list of operators is provided, all are added together, or a single
@@ -75,7 +75,7 @@ class lin_op:
         if isinstance(op, list) or isinstance(op, tuple):
             for this_op in op:
                 op.add(self, this_op)
-            return self 
+            return self
         if self.r is not None:
             self.r=np.append(self.r, op.r)
             self.c=np.append(self.c, op.c)
@@ -95,11 +95,11 @@ class lin_op:
 
     def interp_mtx(self, pts):
         # create a matrix that, when it multiplies a set of nodal values,
-        # gives the bilinear interpolation between those nodes at a set of 
+        # gives the bilinear interpolation between those nodes at a set of
         # data points
         pts=[pp.ravel() for pp in pts]
         # Identify the nodes surrounding each data point
-        # The floating-point subscript expresses the point locations in terms 
+        # The floating-point subscript expresses the point locations in terms
         # of their grid positions
         ii=self.grid.float_sub(pts)
         cell_sub=self.grid.cell_sub_for_pts(pts)
@@ -107,7 +107,7 @@ class lin_op:
         i_local=[a-b for a, b in zip(ii,cell_sub)]
         # find the index of the node below each data point
         global_ind=self.grid.global_ind(cell_sub)
-        # make a list of dimensions based on the dimensions of the grid               
+        # make a list of dimensions based on the dimensions of the grid
         if self.grid.N_dims==1:
             list_of_dims=np.mgrid[0:2]
         elif self.grid.N_dims==2:
@@ -133,20 +133,20 @@ class lin_op:
         self.c=cc
         self.v=vv
         self.N_eq=Npts
-        # in this case, sub0s is the index of the data points     
+        # in this case, sub0s is the index of the data points
         self.ind0=np.arange(0, Npts, dtype='int')
         # report the table of contents
         self.TOC['rows']={self.name:np.arange(self.N_eq, dtype='int')}
         self.TOC['cols']={self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
         return self
-        
+
     def grad(self, DOF='z'):
         coeffs=np.array([-1., 1.])/(self.grid.delta[0])
         dzdx=lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), coeffs)
         dzdy=lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), coeffs)
         self.vstack((dzdx, dzdy))
         return self
-        
+
     def grad_dzdt(self, DOF='z'):
         coeffs=np.array([-1., 1., 1., -1.])/(self.grid.delta[0]*self.grid.delta[2])
         d2zdxdt=lin_op(self.grid, name='d2'+DOF+'_dxdt').diff_op(([ 0, 0,  0, 0], [-1, 0, -1, 0], [-1, -1, 0, 0]), coeffs)
@@ -160,12 +160,12 @@ class lin_op:
         deltas[dim]=[0, lag]
         self.diff_op((deltas), coeffs)
         return self
-        
+
     def dzdt(self, lag=1, DOF='dz'):
         coeffs=np.array([-1., 1.])/(lag*self.grid.delta[2])
         self.diff_op(([0, 0], [0, 0], [0, lag]), coeffs)
         return self
-    
+
     def d2z_dt2(self, DOF='dz'):
         coeffs=np.array([-1, 2, -1])/(self.grid.delta[2]**2)
         self=lin_op(self.grid, name='d2'+DOF+'_dt2').diff_op(([0,0,0], [0,0,0], [-1, 0, 1]), coeffs)
@@ -178,7 +178,7 @@ class lin_op:
         d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]**2))
         self.vstack((d2zdx2, d2zdy2, d2zdxdy))
         return self
-        
+
     def grad2_dzdt(self, DOF='z'):
         coeffs=np.array([-1., 2., -1., 1., -2., 1.])/(self.grid.delta[0]**2.*self.grid.delta[2])
         d3zdx2dt=lin_op(self.grid, name='d3'+DOF+'_dx2dt').diff_op(([0, 0, 0, 0, 0, 0],[-1, 0, 1, -1, 0, 1], [-1,-1,-1, 0, 0, 0]), coeffs)
@@ -186,16 +186,16 @@ class lin_op:
         coeffs=np.array([-1., 1., 1., -1., 1., -1., -1., 1.])/(self.grid.delta[0]**2*self.grid.delta[2])
         d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-1, -1, -1, -1, 0, 0, 0, 0]),  coeffs)
         self.vstack((d3zdx2dt, d3zdy2dt, d3zdxdydt))
-        return self  
-    
+        return self
+
     def mean_of_bounds(self, bds, mask=None):
         # make a linear operator that calculates the mean of all points
-        # in its grid that fall within bounds specified by 'bnds',  If an 
-        # empty matrix is specified for a dimension, the entire dimension is 
+        # in its grid that fall within bounds specified by 'bnds',  If an
+        # empty matrix is specified for a dimension, the entire dimension is
         # included.
         # optionally, a 'mask' variable can be used to select from within the
         # bounds.
-        
+
         coords=np.meshgrid(*self.grid.ctrs, indexing='ij')
         in_bds=np.ones_like(coords[0], dtype=bool)
         for dim, bnd in enumerate(bds):
@@ -210,11 +210,11 @@ class lin_op:
         self.TOC['cols']={self.name:self.c}
         self.N_eq=1.
         return self
-    
+
     def data_bias(self, ind, col=None):
-        # make a linear operator that returns a particular model parameter.  
-        # can be used to add one model parameter to a set of other parameters, 
-        # when added to another matrix, or to force a model parameter towards 
+        # make a linear operator that returns a particular model parameter.
+        # can be used to add one model parameter to a set of other parameters,
+        # when added to another matrix, or to force a model parameter towards
         # a particular value, when appended to another matrix
         if col is None:
             col=self.col_N
@@ -226,30 +226,30 @@ class lin_op:
         self.TOC['cols']={self.name:np.unique(self.c)}
         self.N_eq=np.max(ind)+1
         return self
-        
+
     def grid_prod(self, m):
         # dot the operator with a vector, map the result to the operator's grid
-        P=np.zeros(self.col_N)+np.NaN   
+        P=np.zeros(self.col_N)+np.NaN
         P[self.ind0]=self.toCSR().dot(m)
         return P[self.grid.col_0:self.grid.col_N].reshape(self.grid.shape)
-    
+
     def grid_error(self, Rinv):
         # calculate the error estimate for an operator and map the result to the operator's grid
-        E=np.zeros(self.col_N)+np.NaN 
+        E=np.zeros(self.col_N)+np.NaN
         E[self.ind0]=np.sqrt((self.toCSR().dot(Rinv)).power(2).sum(axis=1))
         return E[self.grid.col_0:self.grid.col_N].reshape(self.grid.shape)
 
     def vstack(self, ops, order=None, name=None, TOC_cols=None):
         # combine a set of operators by stacking them vertically to form
         # a composite operator.  This could also be done by converting
-        # the operators to sparse matrices and stacking them using the 
+        # the operators to sparse matrices and stacking them using the
         # vstack function, but using the lin_op.vstack() keeps track of
         # the different equations in the TOC
         if isinstance(ops, lin_op):
             ops=(self, ops)
         if order is None:
             order=range(len(ops))
-        if name is not None:  
+        if name is not None:
             self.name=name
         if TOC_cols is None:
             TOC_cols=dict()
@@ -263,7 +263,7 @@ class lin_op:
                 TOC_cols[self.name]=np.unique(col_array)
         if self.col_N is None:
             self.col_N=np.max(np.array([op.col_N for op in ops]))
-         
+
         self.TOC['cols']=TOC_cols
         # rr, cc, and vv are lists that will be populated with the nonzero
         # entries for each matrix being combined.
@@ -288,9 +288,9 @@ class lin_op:
                 name_suffix+=1
                 temp_name="%s_%d" %(this_name, name_suffix)
             if name_suffix>0:
-                this_name="%s_%d" %(this_name, name_suffix)              
+                this_name="%s_%d" %(this_name, name_suffix)
             # shift the TOC entries and keep track of what sub-operators make up the current operator
-            this_row_list=list()               
+            this_row_list=list()
             for key in ops[ind].TOC['rows'].keys():
                 these_rows=np.array(ops[ind].TOC['rows'][key], dtype='int')+last_row
                 self.TOC['rows'][key]=these_rows
@@ -305,7 +305,7 @@ class lin_op:
         self.v=np.concatenate(vv)
 
         self.ind0=np.concatenate([op.ind0 for op in ops])
-        if self.name is not None and len(self.name) >0:            
+        if self.name is not None and len(self.name) >0:
             self.TOC['rows'][self.name]=np.arange(0, last_row)
         return self
 
@@ -316,7 +316,7 @@ class lin_op:
             temp=np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
             subs=[temp[ii] for ii in range(len(self.grid.mask.shape))]
         else:
-            inds=self.ind0-self.grid.col_0    
+            inds=self.ind0-self.grid.col_0
             subs=np.unravel_index(inds, self.grid.mask.shape)
         temp=self.grid.mask[subs]
         if mask_scale is not None:
@@ -333,9 +333,14 @@ class lin_op:
             rc_min={k:np.min(self.TOC[rc][k]) for k in self.TOC[rc].keys()}
             for key in sorted(rc_min, key=rc_min.get):
                 print("\t%s\t%d : %d" % (key, np.min(self.TOC[rc][key]), np.max(self.TOC[rc][key])))
- 
+
+    def fix_dtypes(self):
+        self.r=self.r.astype(int)
+        self.c=self.c.astype(int)
+
     def toCSR(self, col_N=None):
         # transform a linear operator to a sparse CSR matrix
         if col_N is None:
             col_N=self.col_N
+        self.fix_dtypes()
         return sp.csr_matrix((self.v.ravel(),(self.r.ravel(), self.c.ravel())), shape=(np.max(self.r.ravel())+1, col_N))

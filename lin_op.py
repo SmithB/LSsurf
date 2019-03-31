@@ -147,10 +147,10 @@ class lin_op:
         self.vstack((dzdx, dzdy))
         return self
 
-    def grad_dzdt(self, DOF='z'):
-        coeffs=np.array([-1., 1., 1., -1.])/(self.grid.delta[0]*self.grid.delta[2])
-        d2zdxdt=lin_op(self.grid, name='d2'+DOF+'_dxdt').diff_op(([ 0, 0,  0, 0], [-1, 0, -1, 0], [-1, -1, 0, 0]), coeffs)
-        d2zdydt=lin_op(self.grid, name='d2'+DOF+'_dydt').diff_op(([-1, 0, -1, 0], [ 0, 0,  0, 0], [-1, -1, 0, 0]), coeffs)
+    def grad_dzdt(self, DOF='z', t_lag=1):
+        coeffs=np.array([-1., 1., 1., -1.])/(t_lag*self.grid.delta[0]*self.grid.delta[2])
+        d2zdxdt=lin_op(self.grid, name='d2'+DOF+'_dxdt').diff_op(([ 0, 0,  0, 0], [-1, 0, -1, 0], [-t_lag, -t_lag, 0, 0]), coeffs)
+        d2zdydt=lin_op(self.grid, name='d2'+DOF+'_dydt').diff_op(([-1, 0, -1, 0], [ 0, 0,  0, 0], [-t_lag, -t_lag, 0, 0]), coeffs)
         self.vstack((d2zdxdt, d2zdydt))
         return self
 
@@ -166,9 +166,9 @@ class lin_op:
         self.diff_op(([0, 0], [0, 0], [0, lag]), coeffs)
         return self
 
-    def d2z_dt2(self, DOF='dz'):
-        coeffs=np.array([-1, 2, -1])/(self.grid.delta[2]**2)
-        self=lin_op(self.grid, name='d2'+DOF+'_dt2').diff_op(([0,0,0], [0,0,0], [-1, 0, 1]), coeffs)
+    def d2z_dt2(self, DOF='dz', t_lag=1):
+        coeffs=np.array([-1, 2, -1])/((t_lag*self.grid.delta[2])**2)
+        self=lin_op(self.grid, name='d2'+DOF+'_dt2').diff_op(([0,0,0], [0,0,0], [-t_lag, 0, t_lag]), coeffs)
         return self
 
     def grad2(self, DOF='z'):
@@ -179,12 +179,12 @@ class lin_op:
         self.vstack((d2zdx2, d2zdy2, d2zdxdy))
         return self
 
-    def grad2_dzdt(self, DOF='z'):
-        coeffs=np.array([-1., 2., -1., 1., -2., 1.])/(self.grid.delta[0]**2.*self.grid.delta[2])
-        d3zdx2dt=lin_op(self.grid, name='d3'+DOF+'_dx2dt').diff_op(([0, 0, 0, 0, 0, 0],[-1, 0, 1, -1, 0, 1], [-1,-1,-1, 0, 0, 0]), coeffs)
-        d3zdy2dt=lin_op(self.grid, name='d3'+DOF+'_dy2dt').diff_op(([-1, 0, 1, -1, 0, 1], [0, 0, 0, 0, 0, 0], [-1, -1, -1, 0, 0, 0]), coeffs)
+    def grad2_dzdt(self, DOF='z', t_lag=1):
+        coeffs=np.array([-1., 2., -1., 1., -2., 1.])/(t_lag*self.grid.delta[0]**2.*self.grid.delta[2])
+        d3zdx2dt=lin_op(self.grid, name='d3'+DOF+'_dx2dt').diff_op(([0, 0, 0, 0, 0, 0],[-1, 0, 1, -1, 0, 1], [-t_lag,-t_lag,-t_lag, 0, 0, 0]), coeffs)
+        d3zdy2dt=lin_op(self.grid, name='d3'+DOF+'_dy2dt').diff_op(([-1, 0, 1, -1, 0, 1], [0, 0, 0, 0, 0, 0], [-t_lag, -t_lag, -t_lag, 0, 0, 0]), coeffs)
         coeffs=np.array([-1., 1., 1., -1., 1., -1., -1., 1.])/(self.grid.delta[0]**2*self.grid.delta[2])
-        d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-1, -1, -1, -1, 0, 0, 0, 0]),  coeffs)
+        d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-t_lag, -t_lag, -t_lag, -t_lag, 0, 0, 0, 0]),  coeffs)
         self.vstack((d3zdx2dt, d3zdy2dt, d3zdxdydt))
         return self
 
@@ -310,8 +310,20 @@ class lin_op:
         return self
 
     def mask_for_ind0(self, mask_scale=None):
+        """
+        Sample the mask at the central indices for a linear operator
+        
+        This function samples the linear operator's mask field at the indices
+        corresponding to the 'ind0' for each row of the operator.  The only
+        input is:
+             mask_scale (dict, or none):   gives the mapping between key values
+                  and output values:  if mask_scale={1:0, 2:1}, then all mask
+                  values equal to 1 will be returned as zero, and all mask values 
+                  equal to 2 will be returned as 1.
+        """         
+        
         if self.grid.mask is None:
-            return np.zeros_like(self.ind0, dtype=float)
+            return np.ones_like(self.ind0, dtype=float)
         if len(self.grid.shape) > len(self.grid.mask.shape):
             temp=np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
             subs=[temp[ii] for ii in range(len(self.grid.mask.shape))]
@@ -343,4 +355,5 @@ class lin_op:
         if col_N is None:
             col_N=self.col_N
         self.fix_dtypes()
-        return sp.csr_matrix((self.v.ravel(),(self.r.ravel(), self.c.ravel())), shape=(np.max(self.r.ravel())+1, col_N))
+        good=self.v.ravel()!=0
+        return sp.csr_matrix((self.v.ravel()[good],(self.r.ravel()[good], self.c.ravel()[good])), shape=(np.max(self.r.ravel()[good])+1, col_N))

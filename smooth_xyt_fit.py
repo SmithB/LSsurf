@@ -5,23 +5,26 @@ Created on Mon Dec  4 15:27:38 2017
 @author: ben
 """
 import numpy as np
-from fd_grid import fd_grid
-from lin_op import lin_op
+from LSsurf.fd_grid import fd_grid
+from LSsurf.lin_op import lin_op
 import scipy.sparse as sp
 import matplotlib.pyplot as plt
 import copy
 import sparseqr
 from time import time
-from RDE import RDE
-from unique_by_rows import unique_by_rows
+from LSsurf.RDE import RDE
+from LSsurf.unique_by_rows import unique_by_rows
 from osgeo import gdal
-
+import os
+import h5py
+import json
 #import scipy.sparse.linalg as spl
 #from spsolve_tr_upper import spsolve_tr_upper
 #from propagate_qz_errors import propagate_qz_errors
-from inv_tr_upper import inv_tr_upper
+from LSsurf.inv_tr_upper import inv_tr_upper
 
 def edit_data_by_subset_fit(N_subset, args):
+    
     W_scale=2./N_subset
     W_subset={'x':args['W']['x']*W_scale, 'y':args['W']['y']*W_scale}
     subset_spacing={key:W_subset[key]/2 for key in list(W_subset)}
@@ -29,21 +32,32 @@ def edit_data_by_subset_fit(N_subset, args):
 
     subset_ctrs=np.meshgrid(np.arange(bds['x'][0]+subset_spacing['x'], bds['x'][1], subset_spacing['x']),  np.arange(bds['y'][0]+subset_spacing['y'], bds['y'][1], subset_spacing['y']))
     valid_data=np.ones_like(args['data'].x, dtype=bool)
+    count=0
     for x0, y0 in zip(subset_ctrs[0].ravel(), subset_ctrs[1].ravel()):
+        count += 1
         in_bounds= \
-            (args['data'].x > x0-W_subset['x']/2) & ( args['data'].x < x0+W_subset['x']/2) & \
-            (args['data'].y > y0-W_subset['x']/2) & ( args['data'].y < y0+W_subset['x']/2)
+            (args['data'].x > x0-W_subset['x']/2) & ( args['data'].x < x0+W_subset['y']/2) & \
+            (args['data'].y > y0-W_subset['x']/2) & ( args['data'].y < y0+W_subset['y']/2)
         if in_bounds.sum() < 10:
             valid_data[in_bounds]=False
             continue
         sub_args=copy.deepcopy(args)
         sub_args['N_subset']=None
-        sub_args['data'].subset(in_bounds)
+        sub_args['data']=sub_args['data'].subset(in_bounds)
         sub_args['W_ctr']=W_subset['x']
+        sub_args['W'].update(W_subset)
         sub_args['ctr'].update({'x':x0, 'y':y0})
+        sub_args['VERBOSE']=False
         if 'subset_iterations' in args:
             sub_args['max_iterations']=args['subset_iterations']
+        tic=time()
+        if args['VERBOSE']:
+            print("working on subset %d, XR=[%d, %d], YR=[%d, %d], f_tot=%2.2f" % (count, x0-W_subset['x']/2, x0+W_subset['x']/2, y0-W_subset['x']/2, y0+W_subset['x']/2, np.mean(in_bounds)))
+ 
         sub_fit=smooth_xyt_fit(**sub_args)
+        t_fit=time()-tic
+        if args['VERBOSE']:
+            print("dt=%3.2f, t expected for all=%3.2f"  % (t_fit, t_fit*subset_ctrs[0].size))
         in_tight_bounds_sub = \
             (sub_args['data'].x > x0-W_subset['x']/4) & (sub_args['data'].x < x0+W_subset['x']/4) & \
             (sub_args['data'].y > y0-W_subset['y']/4) & (sub_args['data'].y < y0+W_subset['y']/4)
@@ -51,40 +65,120 @@ def edit_data_by_subset_fit(N_subset, args):
             (args['data'].x > x0-W_subset['x']/4) & ( args['data'].x < x0+W_subset['x']/4) & \
             (args['data'].y > y0-W_subset['y']/4) & ( args['data'].y < y0+W_subset['x']/4)
         valid_data[in_tight_bounds_all] = valid_data[in_tight_bounds_all] & sub_fit['valid_data'][in_tight_bounds_sub]
+    if args['VERBOSE']:
+        print("from all subsets, found %d data" % valid_data.sum())
     return valid_data
 
-def param_bias_matrices(data, grids, bias_params, E_RMS, col_0=None):
+def select_repeat_data(data, grids, repeat_dt, resolution):
     """
+        Select data that are repeats
+        
+        input arguments:
+            data: input data
+            grids: grids
+            repeat_dt: time interval by which repeats must be separated to count
+            resolution: spatial resolution of repeat calculation
+    """      
+    repeat_grid=fd_grid( grids['z0'].bds, resolution*np.ones(2), name='repeat')
+    t_coarse=np.round((data.time-grids['dz'].bds[2][0])/repeat_dt)*repeat_dt
+    grid_repeat_count=np.zeros(np.prod(repeat_grid.shape))
+    for t_val in np.unique(t_coarse):
+        # select the data points for each epoch
+        ii=t_coarse==t_val
+        # use the lin_op.interp_mtx to find the grid points associated with each node
+        grid_repeat_count += np.asarray(lin_op(repeat_grid).interp_mtx((data.y[ii], data.x[ii])).toCSR().sum(axis=0)>0.5).ravel()
+    data_repeats = lin_op(repeat_grid).interp_mtx((data.y, data.x)).toCSR().dot((grid_repeat_count>1).astype(np.float64))
+    return data_repeats>0.5
 
+def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, bias_model=None):
     """
-    if col_0 is None:
-        col_0=grids['dz'].col_N
-    #Name the matrix
-    biasParamName='bias_'+'_'.join(bias_params)
-    # find the unique combinations of the paramters in bias_params.
-    u_p, i_p=unique_by_rows(np.column_stack([getattr(data, bp) for bp in bias_params]), return_index=True)
-    G_bias=lin_op(None, name=biasParamName, col_0=col_0, col_N=col_0+u_p.shape[0])
-    Gc_bias_list=list()
-    param_bias_dict={param:list() for param in bias_params}
-    E_RMS[biasParamName]=list()
-    #loop over unique parameter values
-    for p_num, param_vals in enumerate(u_p):
-        this_mask=np.ones(data.size, dtype=bool)
-        this_name='bias_'
-        #Identify the data that match the parameter values
-        for i_param, param in enumerate(bias_params):
-            this_mask = this_mask & (getattr(data, param)==param_vals[i_param])
-            this_name += '%s%3.2f' % (param, param_vals[i_param])
-            param_bias_dict[param].append(param_vals[i_param])
-        this_ind=np.where(this_mask)[0]
-        param_col=col_0+p_num
-        G_bias.add(lin_op(grids['dz'], name=this_name).data_bias(this_ind, col=param_col))
-        Gc_bias_list.append(lin_op(grids['dz'], col_N=G_bias.col_N, name=this_name).data_bias(np.array(0),col=param_col))
-        E_RMS[biasParamName].append(np.median(data.sigma_corr[this_ind]))
-    E_RMS[biasParamName]=np.array(E_RMS[biasParamName])
-    Gc_bias=lin_op(None, name=biasParamName+'_constraint').vstack(Gc_bias_list)
-    return G_bias, Gc_bias, param_bias_dict
+    Assign a value to each data point that determines which biases are applied to it.
 
+    parameters:
+        data: pointdata instance
+        bias_parameters: a list of parameters, each unique combination of which defines a different bias
+        bias_name: a name for the biases
+        key_name: an optional parameter which will be used as the dataset name, otherwise a key will be built from the parameter values
+        bias_model: a dict containing entries:
+            E_bias: a dict of expected bias values for the each biasID, determined from the sigma_corr parameter of the data
+            bias_ID_dict: a dict giving the parameter values for each bias_ID (or the key_name if provided)
+            bias_param_dict: a dict giving the mapping from parameter values to bias_ID values
+    """
+    if bias_model is None:
+        bias_model={'E_bias':dict(), 'bias_param_dict':dict(), 'bias_ID_dict':dict()}
+    bias_ID=np.zeros(data.size)+-9999
+    p0=len(bias_model['bias_ID_dict'].keys())
+    if bias_params is None:
+        # assign all data the same bias
+        bias_model['bias_ID_dict'][p0+1]=key_name
+        bias_ID=p0+1
+        bias_model['E_bias'][p0+1]=np.nanmedian(data.sigma_corr)
+    else:    
+        bias_ID=np.zeros(data.size)
+        temp=np.column_stack([getattr(data, bp) for bp in bias_params])
+        u_p, i_p=unique_by_rows(temp, return_index=True)
+        bias_model['bias_param_dict'].update({param:list() for param in bias_params})
+        bias_model['bias_param_dict'].update({'ID':list()})
+        for p_num, param_vals in enumerate(u_p):
+            this_mask=np.ones(data.size, dtype=bool)      
+            param_vals_dict={}
+            #Identify the data that match the parameter values
+            for i_param, param in enumerate(bias_params):
+                this_mask = this_mask & (getattr(data, param)==param_vals[i_param])
+                param_vals_dict[param]=param_vals[i_param]
+                #this_name += '%s%3.2f' % (param, param_vals[i_param])
+                bias_model['bias_param_dict'][param].append(param_vals[i_param])
+            bias_model['bias_param_dict']['ID'].append(p0+p_num)
+            this_ind=np.where(this_mask)[0]
+            bias_ID[this_ind]=p0+p_num
+            bias_model['bias_ID_dict'][p0+p_num]=param_vals_dict
+            bias_model['E_bias'][p0+p_num]=np.nanmedian(data.sigma_corr[this_ind])
+    data.assign({bias_name:bias_ID})
+    return data, bias_model
+
+def param_bias_matrix(data,  bias_model, col_0=0, bias_param_name='data_bias', op_name='data_bias'):
+    """
+        Make a matrix that adds a set of parameters representing the biases of a set of data.
+        
+        input arguments:
+             data: data for the problem.  Must containa parameter with the name specified in 'bias_param_name
+             bias_model: bias_model dict from assign_bias_params             
+             col_0: the first column of the matrix.
+             bias_param_name: name of the parameter used to assign the biases.  Defaults to 'data_bias'
+             op_name: the name for the output bias operator.
+         output_arguments:
+             G_bias: matrix that gives the biases for each parameter
+             Gc_bias: matrix that gives the bias values (constraint matrix)
+             E_bias: expected value for each bias parameter
+             bias_model: bias model dict as defined in assign_bias_ID
+    """
+    col=getattr(data, bias_param_name).astype(int)
+    col_N=col_0+np.max(col)+1
+    G_bias=lin_op(name=op_name, col_0=col_0, col_N=col_N).data_bias(np.arange(data.size), col=col_0+col)
+    ii=np.arange(col.max(), dtype=int)
+    Gc_bias=lin_op(name='contstraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii,col=col_0+ii)
+    E_bias=[bias_model['E_bias'][ind] for ind in ii]
+    for key in bias_model['bias_ID_dict']:
+        bias_model['bias_ID_dict'][key]['col']=col_0+key
+    return G_bias, Gc_bias, E_bias, bias_model
+
+def parse_biases(m, ID_dict, bias_params):
+    """
+        parse the biases in the ouput model
+        
+        inputs: 
+            m: model vector
+            bID_dict: the bias parameter dictionary from assign_bias_ID
+        output: 
+            ID_dict: a dictionary giving the parameters and associated bias values for each ibas ID
+    """
+    b_dict={param:list() for param in bias_params+['val']}
+    for param in bias_params:
+        for item in ID_dict:
+            b_dict['val'].append(m[ID_dict[item]['col']])
+            for param in bias_params:
+                b_dict[param].append(ID_dict[item][param])        
+    return b_dict
 
 def smooth_xyt_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
@@ -96,16 +190,24 @@ def smooth_xyt_fit(**kwargs):
     'max_iterations':10,
     'srs_WKT': None,
     'N_subset': None,
-    'bias_params': None}
+    'bias_params': None, 
+    'repeat_res':None, 
+    'repeat_dt': 1, 
+    'Edit_only': False,
+    'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
         if field not in kwargs:
             raise ValueError("%s must be defined", field)
     valid_data=np.ones_like(args['data'].x, dtype=bool)
-    if args['N_subset'] is not None:
-        valid_data=edit_data_by_subset_fit(args['N_subset'], args)
-
     timing=dict()
+    
+    if args['N_subset'] is not None:
+        tic=time()
+        valid_data=edit_data_by_subset_fit(args['N_subset'], args)
+        timing['edit_by_subset']=time()-tic
+        if args['Edit_only']:
+            return {'timing':timing, 'data':args['data'].copy().subset(valid_data)}
     m=dict()
     E=dict()
 
@@ -121,11 +223,19 @@ def smooth_xyt_fit(**kwargs):
 
     # select only the data points that are within the grid bounds
     valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
-    valid_dz=grids['dz'].validate_pts((args['data'].coords()))
-    valid_data=valid_dz & valid_z0
+    valid_dz=grids['dz'].validate_pts((args['data'].coords()))     
+    valid_data=valid_data & valid_dz & valid_z0
+    
+    # if repeat_res is given, resample the data to include only repeat data (to within a spatial tolerance of repeat_res)
+    if args['repeat_res'] is not None:
+        valid_data[valid_data]=valid_data[valid_data] & \
+            select_repeat_data(args['data'].copy().subset(valid_data), grids, args['repeat_dt'], args['repeat_res']) 
+
+    # subset the data based on the valid mask
     data=args['data'].copy().subset(valid_data)
 
-    # if we have a mask file, interpolate it to the data points
+    # if we have a mask file, use it to subset the data
+    # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
     if args['mask_file'] is not None:
         temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_WKT=args['srs_WKT'], mask_file=args['mask_file'])
         data_mask=lin_op(temp, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['z0'].mask.ravel())
@@ -133,31 +243,21 @@ def smooth_xyt_fit(**kwargs):
         if np.any(data_mask==0):
             data.subset(~(data_mask==0))
             valid_data[valid_data]= ~(data_mask==0)
-
+ 
     # define the interpolation operator, equal to the sum of the dz and z0 operators
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
     G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))
 
-    # add bias parameters to G_interp, and add constraints for the biases
-    #u_rgt, i_rgt_cycle=unique_by_rows(np.c_[data.rgt, data.cycle], return_index=True)
-    #G_bias=lin_op(None, name='track_bias', col_0=grids['dz'].col_N, col_N=grids['dz'].col_N+u_rgt.shape[0])
-    #Gc_bias_list=list()
-    #E_RMS['track_bias']=np.array([])
-    #for rc_num, rc in enumerate(u_rgt):
-    #    this_rgt_ind=np.where(np.logical_and(data.rgt==rc[0], data.cycle==rc[1]))[0]
-    #    this_name='bias_cycle%d_track%d' % tuple(rc)
-    #    G_bias.add(lin_op(grids['dz'], name=this_name).data_bias(this_rgt_ind, col=G_data.col_N+rc_num))
-    #    Gc_bias_list.append(lin_op(grids['dz'], col_N=G_bias.col_N, name=this_name).data_bias(np.array(0),col=G_data.col_N+rc_num))
-    #    E_RMS['track_bias']=np.append(E_RMS['track_bias'], np.median(data.sigma_corr[this_rgt_ind]))
-    #Gc_bias=lin_op(None, name='track_bias_constraint').vstack(Gc_bias_list)
+    # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
-        G_bias, Gc_bias, param_bias_dict= param_bias_matrices(data, grids, args['bias_params'], args['E_RMS'])
+        data, bias_model=assign_bias_ID(data, args['bias_params'])
+        G_bias, Gc_bias, Cvals_bias, bias_model=param_bias_matrix(data, bias_model, bias_param_name='bias_ID', col_0=grids['dz'].col_N)
         G_data.add(G_bias)
 
     # define the smoothness constraints
     grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
-    grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z')
-    grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z')
+    grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z', t_lag=1)
+    grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z', t_lag=1)
     d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
 
     # put the equations together
@@ -176,10 +276,8 @@ def smooth_xyt_fit(**kwargs):
     Ec[Gc.TOC['rows']['grad_dzdt']]=args['E_RMS']['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(args['mask_scale'])
     Ec[Gc.TOC['rows']['d2z_dt2']]=args['E_RMS']['d2z_dt2']/root_delta_V_dz#*d2z_dt2.mask_for_sub(mask_scale)
     if args['bias_params'] is not None:
-        Ec[Gc.TOC['rows'][G_bias.name+'_constraint']]=args['E_RMS'][G_bias.name]
-
+        Ec[Gc.TOC['rows'][Gc_bias.name]]=Cvals_bias
     Ed=data.sigma.ravel()
-
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))
 
@@ -207,11 +305,15 @@ def smooth_xyt_fit(**kwargs):
     # eliminate the columns for the model variables that are set to zero
     Gcoo=Gcoo.dot(Ip_c)
     timing['setup']=time()-tic
-
+    
+    if np.any(data.z>2500):
+        print('outlier!')
     # initialize the book-keeping matrices for the inversion
     m0=np.zeros(Ip_c.shape[0])
     inTSE=np.arange(G_data.N_eq, dtype=int)
-
+    if args['VERBOSE']:
+        print("initial: %d:" % G_data.r.max())
+    tic_iteration=time()
     for iteration in range(args['max_iterations']):
         # build the parsing matrix that removes invalid rows
         Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+inTSE.size), (np.arange(Gc.N_eq+inTSE.size), np.concatenate((inTSE, cov_rows)))), shape=(Gc.N_eq+inTSE.size, Gcoo.shape[0])).tocsc()
@@ -221,7 +323,7 @@ def smooth_xyt_fit(**kwargs):
         tic=time(); m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))); timing['sparseqr_solve']=time()-tic
 
         # quit if the solution is too similar to the previous solution
-        if np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < 0.05:
+        if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < 0.05) and (iteration > 2):
             break
 
         # calculate the full data residual
@@ -230,14 +332,20 @@ def smooth_xyt_fit(**kwargs):
         sigma_hat=RDE(rs_data[inTSE])
         inTSE_last=inTSE
         # select the data that are within 3*sigma of the solution
-        inTSE=np.where(np.abs(rs_data)<3.0*sigma_hat)[0]
-        print('found %d in TSE, sigma_hat=%3.3f' % (inTSE.size, sigma_hat))
-        if sigma_hat <= 1 or( inTSE.size == inTSE_last.size and np.all( inTSE_last == inTSE )):
+        inTSE=np.where(np.abs(rs_data)<3.0*np.maximum(1,sigma_hat))[0]
+        if args['VERBOSE']:
+            print('found %d in TSE, sigma_hat=%3.3f' % (inTSE.size, sigma_hat))
+        if (sigma_hat <= 1 or( inTSE.size == inTSE_last.size and np.all( inTSE_last == inTSE ))) and (iteration > 2):           
+            if args['VERBOSE']:
+                print("sigma_hat LT 1, exiting")
             break
-
+    timing['iteration']=time()-tic_iteration
+    inTSE=inTSE_last
     valid_data[valid_data]=(np.abs(rs_data)<3.0*sigma_hat)
+    data.assign({'three_sigma_edit':np.abs(rs_data)<3.0*sigma_hat})
     # report the model-based estimate of the data points
     data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
+    
 
     # reshape the components of m to the grid shapes
     m['z0']=np.reshape(m0[Gc.TOC['cols']['z0']], grids['z0'].shape)
@@ -266,11 +374,17 @@ def smooth_xyt_fit(**kwargs):
     m['dzdt_bar_1yr']=ddt_1yr.dot(m['dz_bar'].ravel())
 
     # report the parameter biases.  Sorted in order of the parameter bias arguments
+    #???
     if args['bias_params'] is not None:
-        m[G_bias.name]=param_bias_dict.update({'bias':m0[Gc.TOC['cols'][Gc_bias.name]]})
+        m['bias']=parse_biases(m0, bias_model['bias_ID_dict'], args['bias_params'])
+ 
     # report the entire model vector, just in case we want it.
+    
     m['all']=m0
-
+    
+    # report the geolocation of the output map
+    m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
+    
     # parse the resduals to assess the contributions of the total error:
     # Make the C matrix for the constraints
     TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
@@ -288,7 +402,6 @@ def smooth_xyt_fit(**kwargs):
     if args['compute_E']:
         tic=time()
         # take the QZ transform of Gcoo
-
         z, R, perm, rank=sparseqr.qz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
         z=z.ravel()
         R=R.tocsr()
@@ -329,11 +442,11 @@ def smooth_xyt_fit(**kwargs):
 
         # report the rgt bias errors.  Sorted by RGT, then by  cycle
         if args['bias_params'] is not None:
-            E[G_bias.name]=param_bias_dict.update({'error':m0[Gc.TOC['cols'][Gc_bias.name]]})
+            E['bias']=parse_biases(E0, bias_model['bias_ID_dict'], args['bias_params'])
 
 
     TOC=Gc.TOC
-    return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing}
+    return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing,'E_RMS':args['E_RMS']}
 
 
 

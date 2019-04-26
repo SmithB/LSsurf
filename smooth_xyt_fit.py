@@ -173,11 +173,10 @@ def parse_biases(m, ID_dict, bias_params):
             ID_dict: a dictionary giving the parameters and associated bias values for each ibas ID
     """
     b_dict={param:list() for param in bias_params+['val']}
-    for param in bias_params:
-        for item in ID_dict:
-            b_dict['val'].append(m[ID_dict[item]['col']])
-            for param in bias_params:
-                b_dict[param].append(ID_dict[item][param])        
+    for item in ID_dict:
+        b_dict['val'].append(m[ID_dict[item]['col']])
+        for param in bias_params:
+            b_dict[param].append(ID_dict[item][param])        
     return b_dict
 
 def smooth_xyt_fit(**kwargs):
@@ -194,6 +193,7 @@ def smooth_xyt_fit(**kwargs):
     'repeat_res':None, 
     'repeat_dt': 1, 
     'Edit_only': False,
+    'dzdt_lags':[1, 4],
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -248,23 +248,24 @@ def smooth_xyt_fit(**kwargs):
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
     G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))
 
+     # define the smoothness constraints
+    grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
+    grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z', t_lag=1)
+    grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z', t_lag=1)
+    constraint_op_list=[grad2_z0, grad2_dz, grad_dzdt]
+    if 'd2z_dt2' in args['E_RMS'] and args['E_RMS']['d2z_dt2'] is not None:
+        d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
+        constraint_op_list.append(d2z_dt2)
+
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
         data, bias_model=assign_bias_ID(data, args['bias_params'])
         G_bias, Gc_bias, Cvals_bias, bias_model=param_bias_matrix(data, bias_model, bias_param_name='bias_ID', col_0=grids['dz'].col_N)
         G_data.add(G_bias)
-
-    # define the smoothness constraints
-    grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
-    grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z', t_lag=1)
-    grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z', t_lag=1)
-    d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
-
+        constraint_op_list.append(Gc_bias)
+ 
     # put the equations together
-    if args['bias_params'] is None:
-        Gc=lin_op(None, name='constraints').vstack((grad2_z0, grad2_dz, grad_dzdt, d2z_dt2))
-    else:
-        Gc=lin_op(None, name='constraints').vstack((grad2_z0, grad2_dz, grad_dzdt, d2z_dt2, Gc_bias))
+    Gc=lin_op(None, name='constraints').vstack(constraint_op_list)
     N_eq=G_data.N_eq+Gc.N_eq
 
     # put together all the errors
@@ -274,7 +275,8 @@ def smooth_xyt_fit(**kwargs):
     Ec[Gc.TOC['rows']['grad2_z0']]=args['E_RMS']['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(args['mask_scale'])
     Ec[Gc.TOC['rows']['grad2_dzdt']]=args['E_RMS']['d3z_dx2dt']/root_delta_V_dz*grad2_dz.mask_for_ind0(args['mask_scale'])
     Ec[Gc.TOC['rows']['grad_dzdt']]=args['E_RMS']['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(args['mask_scale'])
-    Ec[Gc.TOC['rows']['d2z_dt2']]=args['E_RMS']['d2z_dt2']/root_delta_V_dz#*d2z_dt2.mask_for_sub(mask_scale)
+    if 'd2z_dt2' in args['E_RMS'] and args['E_RMS']['d2z_dt2'] is not None:
+        Ec[Gc.TOC['rows']['d2z_dt2']]=args['E_RMS']['d2z_dt2']/root_delta_V_dz
     if args['bias_params'] is not None:
         Ec[Gc.TOC['rows'][Gc_bias.name]]=Cvals_bias
     Ed=data.sigma.ravel()
@@ -310,7 +312,10 @@ def smooth_xyt_fit(**kwargs):
         print('outlier!')
     # initialize the book-keeping matrices for the inversion
     m0=np.zeros(Ip_c.shape[0])
-    inTSE=np.arange(G_data.N_eq, dtype=int)
+    if "three_sigma_edit" in data.list_of_fields:
+        inTSE=np.where(data.three_sigma_edit)[0]
+    else:
+        inTSE=np.arange(G_data.N_eq, dtype=int)
     if args['VERBOSE']:
         print("initial: %d:" % G_data.r.max())
     tic_iteration=time()
@@ -319,6 +324,8 @@ def smooth_xyt_fit(**kwargs):
         Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+inTSE.size), (np.arange(Gc.N_eq+inTSE.size), np.concatenate((inTSE, cov_rows)))), shape=(Gc.N_eq+inTSE.size, Gcoo.shape[0])).tocsc()
 
         m0_last=m0
+        if args['VERBOSE']:
+            print("starting qr solve for iteration %d" % iteration)
         # solve the equations
         tic=time(); m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))); timing['sparseqr_solve']=time()-tic
 
@@ -341,8 +348,8 @@ def smooth_xyt_fit(**kwargs):
             break
     timing['iteration']=time()-tic_iteration
     inTSE=inTSE_last
-    valid_data[valid_data]=(np.abs(rs_data)<3.0*sigma_hat)
-    data.assign({'three_sigma_edit':np.abs(rs_data)<3.0*sigma_hat})
+    valid_data[valid_data]=(np.abs(rs_data)<3.0*np.maximum(1, sigma_hat))
+    data.assign({'three_sigma_edit':np.abs(rs_data)<3.0*np.maximum(1, sigma_hat)})
     # report the model-based estimate of the data points
     data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
     
@@ -352,9 +359,10 @@ def smooth_xyt_fit(**kwargs):
     m['dz']=np.reshape(m0[Gc.TOC['cols']['dz']], grids['dz'].shape)
 
     # calculate height rates
-    m['dzdt_qyr']=lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt().grid_prod(m0)
-    m['dzdt_1yr']=lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt(lag=4).grid_prod(m0)
-
+    for lag in args['dzdt_lags']:
+        this_name='dzdt_lag%d' % lag
+        m[this_name]=lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt(lag=lag).grid_prod(m0)
+    
     # build a matrix that takes the average of the central 20 km of the delta-z grid
     XR=np.mean(grids['z0'].bds[0])+np.array([-1., 1.])*args['W_ctr']/2.
     YR=np.mean(grids['z0'].bds[1])+np.array([-1., 1.])*args['W_ctr']/2.
@@ -363,15 +371,13 @@ def smooth_xyt_fit(**kwargs):
     # calculate the grid mean of dz
     m['dz_bar']=G_dzbar.dot(m0)
 
-    # build a matrix that takes the lag-one temporal derivative of dzbar (quarterly dzdt)
-    ddt_qyr=lin_op(grids['t'], name='dzdt_qyr_1D').diff(lag=1).toCSR()
-    # calculate the grid mean of dz/dt
-    m['dzdt_bar_qyr']=ddt_qyr.dot(m['dz_bar'].ravel())
+    # build a matrix that takes the lagged temporal derivative of dzbar (e.g. quarterly dzdt, annual dzdt)
+    for lag in args['dzdt_lags']:
+        this_name='dzdt_bar_lag%d' % lag
+        this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR()
+        # calculate the grid mean of dz/dt
+        m[this_name]=this_op.dot(m['dz_bar'].ravel())
 
-    # build a matrix that takes the lag-four temporal derivative of dzbar (annual dzdt)
-    ddt_1yr=lin_op(grids['t'], name='dzdt_1yr_1D').diff(lag=4).toCSR()
-    # calculate the grid mean of dz/dt, with a one-year lag
-    m['dzdt_bar_1yr']=ddt_1yr.dot(m['dz_bar'].ravel())
 
     # report the parameter biases.  Sorted in order of the parameter bias arguments
     #???
@@ -393,8 +399,9 @@ def smooth_xyt_fit(**kwargs):
     R=dict()
     RMS=dict()
     for eq_type in ['d2z_dt2','grad2_z0','grad2_dzdt']:
-        R[eq_type]=np.sum(rc[Gc.TOC['rows'][eq_type]]**2)
-        RMS[eq_type]=np.sqrt(np.mean(ru[Gc.TOC['rows'][eq_type]]**2))
+        if eq_type in Gc.TOC['rows']:
+            R[eq_type]=np.sum(rc[Gc.TOC['rows'][eq_type]]**2)
+            RMS[eq_type]=np.sqrt(np.mean(ru[Gc.TOC['rows'][eq_type]]**2))
     R['data']=np.sum(((data.z_est-data.z)/data.sigma)**2)
     RMS['data']=np.sqrt(np.mean((data.z_est-data.z)**2))
 
@@ -425,20 +432,31 @@ def smooth_xyt_fit(**kwargs):
         E['z0']=np.reshape(E0[Gc.TOC['cols']['z0']], grids['z0'].shape)
         E['dz']=np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)
 
+        # generate the lagged dz errors:
+ 
+        for lag in args['dzdt_lags']:
+            this_name='dzdt_lag%d' % lag
+            E[this_name]=lin_op(grids['dz'], name=this_name, col_N=G_data.col_N).dzdt(lag=lag).grid_error(Ip_c.dot(Rinv))
+                      
+            this_name='dzdt_bar_lag%d' % lag
+            this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR()
+            E[this_name]=np.sqrt((this_op.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
+        # calculate the grid mean of dz/dt
+
         # generate the season-to-season errors
-        E['dzdt_qyr']=lin_op(grids['dz'], name='dzdt_1yr', col_N=G_data.col_N).dzdt().grid_error(Ip_c.dot(Rinv))
+        #E['dzdt_qyr']=lin_op(grids['dz'], name='dzdt_1yr', col_N=G_data.col_N).dzdt().grid_error(Ip_c.dot(Rinv))
 
         # generate the annual errors
-        E['dzdt_1yr']=lin_op(grids['dz'], name='dzdt_1yr', col_N=G_data.col_N).dzdt(lag=4).grid_error(Ip_c.dot(Rinv))
+        #E['dzdt_1yr']=lin_op(grids['dz'], name='dzdt_1yr', col_N=G_data.col_N).dzdt(lag=4).grid_error(Ip_c.dot(Rinv))
 
         # generate the grid-mean error
         E['dz_bar']=np.sqrt((G_dzbar.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
 
         # generate the grid-mean quarterly dzdt error
-        E['dzdt_bar_qyr']=np.sqrt((ddt_qyr.dot(G_dzbar).dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
+        #E['dzdt_bar_qyr']=np.sqrt((ddt_qyr.dot(G_dzbar).dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
 
         # generate the grid-mean annual dzdt error
-        E['dzdt_bar_1yr']=np.sqrt((ddt_1yr.dot(G_dzbar).dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
+        #E['dzdt_bar_1yr']=np.sqrt((ddt_1yr.dot(G_dzbar).dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
 
         # report the rgt bias errors.  Sorted by RGT, then by  cycle
         if args['bias_params'] is not None:

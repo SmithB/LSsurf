@@ -295,8 +295,10 @@ class lin_op:
                 these_rows=np.array(ops[ind].TOC['rows'][key], dtype='int')+last_row
                 self.TOC['rows'][key]=these_rows
                 this_row_list.append(these_rows.ravel())
-            # add a TOC entry for all of the sub operators together
-            self.TOC['rows'][this_name]=np.concatenate(this_row_list)
+            # add a TOC entry for all of the sub operators together, if it's 
+            # not there already (which happens if we're concatenating composite operators)
+            if this_name not in self.TOC['rows']:
+                self.TOC['rows'][this_name]=np.concatenate(this_row_list)
             last_row+=ops[ind].N_eq
         # Combine the nonzero entries
         self.N_eq=last_row

@@ -26,7 +26,7 @@ def unique_by_rows(x, return_dict=False, return_index=False, return_inverse=Fals
     # values in each column
     scale=1.
     if len(x.shape)==1:
-        x.shape=[x.shape, 1]
+        x.shape=[x.shape[0], 1]
     for col in range(x.shape[1]):        
         z, ii=np.unique(x[:,col].astype(np.float64), return_inverse=True)
         scale /= (np.max(ii).astype(float)+1.)

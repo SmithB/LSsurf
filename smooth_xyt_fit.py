@@ -69,7 +69,7 @@ def edit_data_by_subset_fit(N_subset, args):
         print("from all subsets, found %d data" % valid_data.sum())
     return valid_data
 
-def select_repeat_data(data, grids, repeat_dt, resolution):
+def select_repeat_data(data, grids, repeat_dt, resolution, reference_time=None):
     """
         Select data that are repeats
         
@@ -88,8 +88,11 @@ def select_repeat_data(data, grids, repeat_dt, resolution):
         # use the lin_op.interp_mtx to find the grid points associated with each node
         grid_repeat_count += np.asarray(lin_op(repeat_grid).interp_mtx((data.y[ii], data.x[ii])).toCSR().sum(axis=0)>0.5).ravel()
     data_repeats = lin_op(repeat_grid).interp_mtx((data.y, data.x)).toCSR().dot((grid_repeat_count>1).astype(np.float64))
-    return data_repeats>0.5
-
+    if reference_time is None:
+        return data_repeats>0.5 
+    else:
+        return (data_repeats > 0.5) | (np.abs(data.time-reference_time ) < repeat_dt)
+    
 def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, bias_model=None):
     """
     Assign a value to each data point that determines which biases are applied to it.
@@ -229,7 +232,7 @@ def smooth_xyt_fit(**kwargs):
     # if repeat_res is given, resample the data to include only repeat data (to within a spatial tolerance of repeat_res)
     if args['repeat_res'] is not None:
         valid_data[valid_data]=valid_data[valid_data] & \
-            select_repeat_data(args['data'].copy().subset(valid_data), grids, args['repeat_dt'], args['repeat_res']) 
+            select_repeat_data(args['data'].copy().subset(valid_data), grids, args['repeat_dt'], args['repeat_res'], reference_time=grids['t'].ctrs[0][args['reference_epoch']]) 
 
     # subset the data based on the valid mask
     data=args['data'].copy().subset(valid_data)
@@ -308,8 +311,8 @@ def smooth_xyt_fit(**kwargs):
     Gcoo=Gcoo.dot(Ip_c)
     timing['setup']=time()-tic
     
-    if np.any(data.z>2500):
-        print('outlier!')
+    #if np.any(data.z>2500):
+    #    print('outlier!')
     # initialize the book-keeping matrices for the inversion
     m0=np.zeros(Ip_c.shape[0])
     if "three_sigma_edit" in data.list_of_fields:

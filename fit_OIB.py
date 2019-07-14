@@ -8,11 +8,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from LSsurf.smooth_xyt_fit import smooth_xyt_fit
 from LSsurf.two_mission_dhdt import read_ICESat2
+from LSsurf.racmo_interp_firn_height import interpolate_racmo_firn
 #from smooth_xyt_fit import wrapped_smooth_xyt_fit
 #from PointDatabase.point_data import point_data
 from PointDatabase import geo_index, point_data, matlabToYear, mapData
 #from LSsurf.fd_grid import fd_grid
 #from LSsurf.lin_op import lin_op
+from LSsurf.interp_MAR_firn import interp_MAR_firn
 from matplotlib.colors import Normalize
 import os
 import h5py
@@ -33,7 +35,7 @@ def GI_files(hemisphere):
         GI_files={'ATM':'/Volumes/insar10/ben/OIB_database/ATM_Qfit/GL/geo_index.h5',
                   'LVIS':'/Volumes/insar10/ben/OIB_database/LVIS/GL/geo_index.h5',
                   'ICESat1':'/Volumes/insar10/ben/OIB_database/glas/GL/rel_634/GeoIndex.h5', 
-                  'ICESat2':'/Volumes/ice2/ben/scf/GL_06/tiles/209/GeoIndex.h5', 
+                  'ICESat2':'/Volumes/ice2/ben/scf/GL_06/tiles/001/GeoIndex.h5', 
                   'DEM':'/Volumes/insar7/ben/ArcticDEM/geocell_v3/GeoIndex.h5' };
         return GI_files
 
@@ -44,7 +46,7 @@ def read_ICESat(xy0, W, gI_file, sensor=1):
         good=(D.IceSVar < 0.035) & (D.reflctUC >0.05) & (D.satElevCorr < 1) & (D.numPk==1)
         good=good.ravel()
         D.subset(good, datasets=['x','y','z','time'])
-        D.assign({'sigma':np.zeros_like(D.x)+0.02, 'sigma_corr':np.zeros_like(D.x)+0.05})
+        D.assign({'sigma':np.zeros_like(D.x)+0.02, 'sigma_corr':np.zeros_like(D.x)+0.25})
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
         D0[ind]=D
     return D0
@@ -109,13 +111,14 @@ def read_OIB_data(xy0, W, hemisphere=1, blockmedian_scale=100):
     except Exception as e:
         print("problem with ICESat-1")
         print(e)
-    try:
+    #try:
+    if True:
         D_LVIS=read_LVIS(xy0, W, GI_files(hemisphere)['LVIS'], blockmedian_scale=100., sensor=data_key('LVIS'))
         if D_LVIS is not None:
             D += D_LVIS
-    except Exception as e:
-        print("Problem with LIVS:" )
-        print(e)
+    #except Exception as e:
+    #    print("Problem with LIVS:" )
+    #    print(e)
     try:
         D_ATM = read_ATM(xy0, W, GI_files(hemisphere)['ATM'], blockmedian_scale=100., sensor=data_key('ATM'))
         if D_ATM is not None:
@@ -192,17 +195,24 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=n
         files += glob.glob(glob_str)
     h=[]
     for file in files:
-        D=mapData().from_h5(file, group='/dz/', field_mapping={'z':'dz'})
-        if np.isfinite(spacing):
-            w01=np.array([-0.5, 0.5])*spacing
-            D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
-        h.append(plt.imshow((D.z[:,:,t_slice[1]]-D.z[:,:,t_slice[0]])/(D.t[t_slice[1]]-D.t[t_slice[0]]), extent=D.extent, vmin=caxis[0], vmax=caxis[1], label=file, origin='lower'))
+        try:
+            D=mapData().from_h5(file, group='/dz/', field_mapping={'z':'dz'})
+            if np.isfinite(spacing):
+                w01=np.array([-0.5, 0.5])*spacing
+                D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
+                h.append(plt.imshow((D.z[:,:,t_slice[1]]-D.z[:,:,t_slice[0]])/(D.t[t_slice[1]]-D.t[t_slice[0]]), \
+                            extent=D.extent, vmin=caxis[0], vmax=caxis[1], label=file, origin='lower', 
+                            cmap="Spectral"))
+        except KeyError as e:
+            print("Error for file "+file)
+            print(e)
+            
     plt.axis('tight');
     plt.axis('equal');
     return h
       
       
-def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  hemisphere=1, reference_epoch=None, D=None, N_subset=8, Edit_only=False, sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, laser_only=False):      
+def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  hemisphere=1, reference_epoch=None, D=None, N_subset=8, Edit_only=False, sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, laser_only=False, firn_correction=False):      
     """
         Wrapper for smooth_xyt_fit that can find data and set the appropriate parameters
     """      
@@ -235,7 +245,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
         if 'cycle' not in Di.list_of_fields:
             Di.assign({'cycle':np.zeros_like(Di.x)+np.NaN})        
     data=point_data(list_of_fields=['x','y','z','time','sigma','sigma_corr','sensor','rgt','cycle']).from_list(D)
-    
+       
     if reference_epoch is None:
         reference_epoch=len(np.arange(t_span[0], t_span[1], spacing['dt']))
     
@@ -251,9 +261,20 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
         data.index(good)
     for field in data.list_of_fields:
         setattr(data, field, getattr(data, field).astype(np.float64))
-         
+    
+    if firn_correction == 'MAR':
+        if hemisphere==1:
+            data.assign({'h_firn':interp_MAR_firn(data.x, data.y, data.time)})
+            data.z -= data.h_firn
+    elif firn_correction == 'RACMO':
+        if hemisphere==1:
+            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)})
+            data.z -= data.h_firn
     # run the fit
-    S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0, reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False, bias_params=['day','sensor'], repeat_res=250, max_iterations=4, srs_WKT=SRS_proj4,  VERBOSE=True, Edit_only=Edit_only)
+    S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0, 
+                     reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False, 
+                     bias_params=['day','sensor'], repeat_res=250, max_iterations=4, srs_WKT=SRS_proj4,  
+                      VERBOSE=True, Edit_only=Edit_only)
     if Edit_only:
         print('N_subsets=%d, t=%f' % ( N_subset, S['timing']['edit_by_subset']))
     
@@ -292,6 +313,7 @@ def main(argv):
     parser.add_argument('--spring_only', '-s', action="store_true")
     parser.add_argument('--laser_only','-l', action="store_true")
     parser.add_argument('--map_dir','-m', type=str)
+    parser.add_argument('--firn_correction','-f', type=str, default=None)
     args=parser.parse_args()
     
     
@@ -305,7 +327,7 @@ def main(argv):
 
     
     fit_OIB(args.xy0, Wxy=4e4, E_RMS=E_RMS, t_span=args.time_span, spacing=spacing,  hemisphere=args.Hemisphere, \
-            out_name=args.out_name, replace=args.Replace, DOPLOT=False, laser_only=args.laser_only, spring_only=args.spring_only)      
+            out_name=args.out_name, replace=args.Replace, DOPLOT=False, laser_only=args.laser_only, spring_only=args.spring_only, firn_correction=args.firn_correction)      
  
 
     

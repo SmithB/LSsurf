@@ -158,7 +158,7 @@ def param_bias_matrix(data,  bias_model, col_0=0, bias_param_name='data_bias', o
     col=getattr(data, bias_param_name).astype(int)
     col_N=col_0+np.max(col)+1
     G_bias=lin_op(name=op_name, col_0=col_0, col_N=col_N).data_bias(np.arange(data.size), col=col_0+col)
-    ii=np.arange(col.max(), dtype=int)
+    ii=np.arange(col.max()+1, dtype=int)
     Gc_bias=lin_op(name='contstraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii,col=col_0+ii)
     E_bias=[bias_model['E_bias'][ind] for ind in ii]
     for key in bias_model['bias_ID_dict']:
@@ -246,7 +246,12 @@ def smooth_xyt_fit(**kwargs):
         if np.any(data_mask==0):
             data.subset(~(data_mask==0))
             valid_data[valid_data]= ~(data_mask==0)
- 
+    
+    # Check if we have any data.  If not, quit
+    if data.size==0:
+        return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
+
+    
     # define the interpolation operator, equal to the sum of the dz and z0 operators
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
     G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))

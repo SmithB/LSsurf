@@ -9,7 +9,8 @@ Created on Tue Feb 26 17:12:48 2019
 from PointDatabase import geo_index, point_data, matlabToYear
 from PointDatabase.mapData import mapData
 from PointDatabase.ATL06_filters import segDifferenceFilter
-from PointDatabase.check_ATL06_blacklist import check_ATL06_blacklist, check_rgt_cycle_blacklist
+from PointDatabase.check_ATL06_blacklist import check_rgt_cycle_blacklist
+
 from LSsurf.RDE import RDE
 from LSsurf.unique_by_rows import unique_by_rows
 import argparse
@@ -89,10 +90,13 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         fields=[]
         for key in field_dict:
             fields += field_dict[key]
+        fields += ['x','y']
     else:
         fields=field_dict
     px, py=np.meshgrid(np.arange(xy0[0]-W['x']/2, xy0[0]+W['x']/2+1.e4, 1.e4),np.arange(xy0[1]-W['y']/2, xy0[1]+W['y']/2+1.e4, 1.e4) )  
     D0=geo_index().from_file(gI_file).query_xy((px.ravel(), py.ravel()), fields=fields)
+    if D0 is None or len(D0)==0:
+        return [None]
     # check the D6 filenames against the blacklist of bad files
     if tiled:
         D0=reconstruct_tracks(point_data(list_of_fields=fields).from_list(D0))
@@ -118,12 +122,13 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         D.assign({'z': D.h_li+D.dac,'time':D.matlab_time,'sigma':D.h_li_sigma,'sigma_corr':D.sigma_geo_h,'cycle':D.cycle_number})
         D.assign({'year':D.delta_time/24./3600./365.25+2018})
         # thin to 40 m
-        D.index(np.mod(D.segment_id, 2)==0)       
-        D.get_xy(SRS_proj4)
+        D.index(np.mod(D.segment_id, 2)==0)  
+        if 'x' not in D.list_of_fields:
+            D.get_xy(SRS_proj4)
         #D.index(np.isfinite(D.h_li), list_of_fields=['x','y','z','time','year','sigma','sigma_corr','rgt','cycle'])
                 
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
-        D1[ind]=D.subset(np.isfinite(D.h_li), datasets=['x','y','z','time','year','sigma','sigma_corr','rgt','cycle','sensor', 'BP','LR'])
+        D1[ind]=D.subset(np.isfinite(D.h_li), datasets=['x','y','z','time','delta_time','year','sigma','sigma_corr','rgt','cycle','sensor', 'BP','LR'])
     return D1
 
 def reread_data_from_files(xy0, W, thedir, template='E%d_N%d.h5'):

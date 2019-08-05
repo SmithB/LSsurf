@@ -198,6 +198,7 @@ def smooth_xyt_fit(**kwargs):
     'Edit_only': False,
     'dzdt_lags':[1, 4],
     'data_slope_sensors':None,
+    'E_slope':0.05,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -273,6 +274,7 @@ def smooth_xyt_fit(**kwargs):
         constraint_op_list.append(Gc_bias)
 
     if args['data_slope_sensors'] is not None:
+        bias_model['E_slope']=args['E_slope']
         G_slope_bias, Gc_slope_bias, Cvals_slope_bias, bias_model= data_slope_bias(data,  bias_model, col_0=G_data.col_N)
         G_data.add(G_slope_bias)
         constraint_op_list.add(Gc_slope_bias)

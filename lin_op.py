@@ -211,7 +211,7 @@ class lin_op:
         self.N_eq=1.
         return self
 
-    def data_bias(self, ind, col=None):
+    def data_bias(self, ind, val=None, col=None):
         # make a linear operator that returns a particular model parameter.
         # can be used to add one model parameter to a set of other parameters,
         # when added to another matrix, or to force a model parameter towards
@@ -221,7 +221,10 @@ class lin_op:
             self.col_N +=1
         self.r=ind
         self.c=np.zeros_like(ind, dtype='int')+col
-        self.v=np.ones_like(ind, dtype='float')
+        if val is None:
+            self.v=np.ones_like(ind, dtype='float')
+        else:
+            self.v=val.ravel()
         self.TOC['rows']={self.name:np.unique(self.r)}
         self.TOC['cols']={self.name:np.unique(self.c)}
         self.N_eq=np.max(ind)+1

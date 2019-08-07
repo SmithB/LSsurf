@@ -34,8 +34,8 @@ def GI_files(hemisphere):
     if hemisphere==1:
         GI_files={'ATM':'/Volumes/insar10/ben/OIB_database/ATM_Qfit/GL/geo_index.h5',
                   'LVIS':'/Volumes/insar10/ben/OIB_database/LVIS/GL/geo_index.h5',
-                  'ICESat1':'/Volumes/insar10/ben/OIB_database/glas/GL/rel_634/GeoIndex.h5', 
-                  'ICESat2':'/Volumes/ice2/ben/scf/GL_06/tiles/001/GeoIndex.h5', 
+                  'ICESat1':'/Volumes/insar10/ben/OIB_database/glas/GL/rel_634/GeoIndex.h5',
+                  'ICESat2':'/Volumes/ice2/ben/scf/GL_06/tiles/001/GeoIndex.h5',
                   'DEM':'/Volumes/insar7/ben/ArcticDEM/geocell_v3/GeoIndex.h5' };
         return GI_files
 
@@ -54,7 +54,7 @@ def read_ICESat(xy0, W, gI_file, sensor=1):
 def read_ATM(xy0, W, gI_file, sensor=3, blockmedian_scale=100.):
     fields=['x','y','z', 'time','bias_50m', 'noise_50m', 'N_50m','slope_x','slope_y']
     if W is not None:
-        xg, yg=np.meshgrid(xy0[0]+np.arange(-W['x']/2, W['x']/2+1.e4, 1.e4), xy0[1]+np.arange(-W['y']/2, W['y']/2+1.e4, 1.e4))    
+        xg, yg=np.meshgrid(xy0[0]+np.arange(-W['x']/2, W['x']/2+1.e4, 1.e4), xy0[1]+np.arange(-W['y']/2, W['y']/2+1.e4, 1.e4))
     else:
         xg=np.array([xy0[0]])
         yg=np.array([xy0[1]])
@@ -81,10 +81,10 @@ def read_ATM(xy0, W, gI_file, sensor=3, blockmedian_scale=100.):
 def read_LVIS(xy0, W, gI_file, sensor=4, blockmedian_scale=100):
     fields={'x','y','z', 'zb', 'time','bias_50m', 'noise_50m','slope_x','slope_y'}
     D0=geo_index().from_file(gI_file).query_xy_box(xy0[0]+np.array([-W['x']/2, W['x']/2]), xy0[1]+np.array([-W['y']/2, W['y']/2]), fields=fields)
-    if D0 is None: 
+    if D0 is None:
         return [None]
     for ind, D in enumerate(D0):
-        # LVIS data have the wrong sign on their 'bias' field 
+        # LVIS data have the wrong sign on their 'bias' field
         D.bias_50m *=-1
         slope_mag=np.sqrt(D.slope_x**2 + D.slope_y**2)
         good = (D.bias_50m < 0.5) & (slope_mag < 6*np.pi/180) & (np.abs(D.bias_50m) < 10)
@@ -137,19 +137,19 @@ def read_DEM_data(xy0, W, sensor_dict, D=None, GI_file=None, hemisphere=1, sigma
         key_num=np.max([key for key in sensor_dict.keys()])+1
     else:
         key_num=0
+    first_key=key_num
     for Di in D_DEM:
         sensor_dict[key_num]=os.path.basename(Di.filename)
         if blockmedian_scale is not None:
             Di.blockmedian(blockmedian_scale)
         Di.assign({'sensor':np.zeros_like(Di.x)+key_num})
         Di.assign({'sigma_corr':np.zeros_like(Di.x)+sigma_corr})
-        
         key_num += 1
     if D is not None:
         D += D_DEM
     else:
         D = D_DEM
-    return D, sensor_dict
+    return D, sensor_dict, np.arange(first_key, key_num)
 
 def save_fit_to_file(S,  filename, sensor_dict=None):
     if os.path.isfile(filename):
@@ -201,28 +201,28 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=n
                 w01=np.array([-0.5, 0.5])*spacing
                 D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
                 h.append(plt.imshow((D.z[:,:,t_slice[1]]-D.z[:,:,t_slice[0]])/(D.t[t_slice[1]]-D.t[t_slice[0]]), \
-                            extent=D.extent, vmin=caxis[0], vmax=caxis[1], label=file, origin='lower', 
+                            extent=D.extent, vmin=caxis[0], vmax=caxis[1], label=file, origin='lower',
                             cmap="Spectral"))
         except KeyError as e:
             print("Error for file "+file)
             print(e)
-            
+
     plt.axis('tight');
     plt.axis('equal');
     return h
-      
-      
-def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  hemisphere=1, reference_epoch=None, D=None, N_subset=8, Edit_only=False, sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, laser_only=False, firn_correction=False):      
+
+
+def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  hemisphere=1, reference_epoch=None, D=None, N_subset=8, Edit_only=False, sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, laser_only=False, firn_correction=False):
     """
         Wrapper for smooth_xyt_fit that can find data and set the appropriate parameters
-    """      
+    """
     print("fit_OIB: working on %s" % out_name)
 
     SRS_proj4=get_SRS_proj4(hemisphere)
-    
+
     E_RMS0={'d2z0_dx2':200000./3000/3000, 'd3z_dx2dt':3000./3000/3000, 'd2z_dxdt':3000/3000, 'd2z_dt2':5000}
     E_RMS0.update(E_RMS)
-    
+
     W={'x':Wxy, 'y':Wxy,'t':np.diff(t_span)}
     ctr={'x':xy0[0], 'y':xy0[1], 't':np.mean(t_span)}
     if out_name is not None:
@@ -232,23 +232,26 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             pass
         if replace is False and os.path.isfile(out_name):
             return None,None
-    
+
     if D is None:
         D, sensor_dict=read_OIB_data(xy0, W, blockmedian_scale=100.)
-        if laser_only == False:
-            D, sensor_dict=read_DEM_data(xy0, W, sensor_dict, D=D, blockmedian_scale=100.)
+        if laser_only:
+            DEM_sensors = None
+        else:
+            D, sensor_dict, DEM_sensors=read_DEM_data(xy0, W, sensor_dict, D=D, blockmedian_scale=100.)
+
     for ind, Di in enumerate(D):
         if Di is None:
             continue
         if 'rgt' not in Di.list_of_fields:
             Di.assign({'rgt':np.zeros_like(Di.x)+np.NaN})
         if 'cycle' not in Di.list_of_fields:
-            Di.assign({'cycle':np.zeros_like(Di.x)+np.NaN})        
+            Di.assign({'cycle':np.zeros_like(Di.x)+np.NaN})
     data=point_data(list_of_fields=['x','y','z','time','sigma','sigma_corr','sensor','rgt','cycle']).from_list(D)
-       
+
     if reference_epoch is None:
         reference_epoch=len(np.arange(t_span[0], t_span[1], spacing['dt']))
-    
+
     data.assign({'day':np.floor(data.time)})
     # smooth_xyt_fit needs time in years, so reassign time from matlab days to years.
     data.time=matlabToYear(data.time)
@@ -261,7 +264,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
         data.index(good)
     for field in data.list_of_fields:
         setattr(data, field, getattr(data, field).astype(np.float64))
-    
+
     if firn_correction == 'MAR':
         if hemisphere==1:
             data.assign({'h_firn':interp_MAR_firn(data.x, data.y, data.time)})
@@ -271,18 +274,18 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)})
             data.z -= data.h_firn
     # run the fit
-    S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0, 
-                     reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False, 
-                     bias_params=['day','sensor'], repeat_res=250, max_iterations=4, srs_WKT=SRS_proj4,  
-                      VERBOSE=True, Edit_only=Edit_only)
+    S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
+                     reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False,
+                     bias_params=['day','sensor'], repeat_res=250, max_iterations=4, srs_WKT=SRS_proj4, DEM_sensors=DEM_sensors,
+                     VERBOSE=True, Edit_only=Edit_only)
     if Edit_only:
         print('N_subsets=%d, t=%f' % ( N_subset, S['timing']['edit_by_subset']))
-    
+
     if out_name is not None:
         save_fit_to_file(S, out_name, sensor_dict)
     if DOPLOT:
         plt.figure(); plt.clf()
-        plt.imshow(np.gradient(S['m']['z0'], S['grids']['z0'].delta[0])[1], extent=S['m']['extent'], cmap=plt.cm.gray, origin='lower'); 
+        plt.imshow(np.gradient(S['m']['z0'], S['grids']['z0'].delta[0])[1], extent=S['m']['extent'], cmap=plt.cm.gray, origin='lower');
         cmap=plt.cm.RdYlBu
         alpha=0.5
         dzImage=(S['m']['dz'][:,:,-1]-S['m']['dz'][:,:,0])/(S['grids']['dz'].ctrs[2][-1]-S['grids']['dz'].ctrs[2][0])
@@ -291,7 +294,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
         plt.imshow( dzIm4, extent=S['m']['extent'],  origin='lower');
         plt.title(out_name)
     return S, D, sensor_dict
- 
+
 def main(argv):
     # account for a bug in argparse that misinterprets negative agruents
     for i, arg in enumerate(argv):
@@ -315,22 +318,21 @@ def main(argv):
     parser.add_argument('--map_dir','-m', type=str)
     parser.add_argument('--firn_correction','-f', type=str, default=None)
     args=parser.parse_args()
-    
-    
+
+
     if args.map_dir is not None:
         h=make_map(glob_str=args.map_dir+'/E*.h5')
         plt.show()
         return h
-    
+
     spacing={'z0':args.grid_spacing[0], 'dz':args.grid_spacing[1], 'dt':args.grid_spacing[2]}
     E_RMS={'d2z0_dx2':args.E_d2z0dx2, 'd3z_dx2dt':args.E_d3zdx2dt, 'd2z_dxdt':args.E_d3zdx2dt*args.data_gap_scale,  'd2z_dt2':args.E_d2zdt2}
 
-    
-    fit_OIB(args.xy0, Wxy=4e4, E_RMS=E_RMS, t_span=args.time_span, spacing=spacing,  hemisphere=args.Hemisphere, \
-            out_name=args.out_name, replace=args.Replace, DOPLOT=False, laser_only=args.laser_only, spring_only=args.spring_only, firn_correction=args.firn_correction)      
- 
 
-    
+    fit_OIB(args.xy0, Wxy=4e4, E_RMS=E_RMS, t_span=args.time_span, spacing=spacing,  hemisphere=args.Hemisphere, \
+            out_name=args.out_name, replace=args.Replace, DOPLOT=False, laser_only=args.laser_only, spring_only=args.spring_only, firn_correction=args.firn_correction)
+
+
+
 if __name__=='__main__':
     main(sys.argv)
-    

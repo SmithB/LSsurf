@@ -165,22 +165,28 @@ def param_bias_matrix(data,  bias_model, col_0=0, bias_param_name='data_bias', o
         bias_model['bias_ID_dict'][key]['col']=col_0+key
     return G_bias, Gc_bias, E_bias, bias_model
 
-def parse_biases(m, ID_dict, bias_params):
+def parse_biases(m, bias_model, bias_params):
     """
         parse the biases in the ouput model
 
         inputs:
             m: model vector
+            bias_model: the bias model
             bID_dict: the bias parameter dictionary from assign_bias_ID
         output:
             ID_dict: a dictionary giving the parameters and associated bias values for each ibas ID
     """
+    slope_bias_dict={}
     b_dict={param:list() for param in bias_params+['val']}
-    for item in ID_dict:
-        b_dict['val'].append(m[ID_dict[item]['col']])
+    for item in bias_model['bias_ID_dict']:
+        b_dict['val'].append(m[bias_model['bias_ID_dict'][item]['col']])
         for param in bias_params:
-            b_dict[param].append(ID_dict[item][param])
-    return b_dict
+            b_dict[param].append(bias_model['bias_ID_dict'][item][param])
+    if 'slope_bias_dict' in bias_model:
+
+        for key in bias_model['slope_bias_dict']:
+            slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
+    return b_dict, slope_bias_dict
 
 def smooth_xyt_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
@@ -394,14 +400,11 @@ def smooth_xyt_fit(**kwargs):
         # calculate the grid mean of dz/dt
         m[this_name]=this_op.dot(m['dz_bar'].ravel())
 
-
     # report the parameter biases.  Sorted in order of the parameter bias arguments
-    #???
     if args['bias_params'] is not None:
-        m['bias']=parse_biases(m0, bias_model['bias_ID_dict'], args['bias_params'])
+        m['bias'], m['slope_bias']=parse_biases(m0, bias_model, args['bias_params'])
 
     # report the entire model vector, just in case we want it.
-
     m['all']=m0
 
     # report the geolocation of the output map

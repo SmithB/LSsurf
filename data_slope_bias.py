@@ -5,7 +5,7 @@ Created on Mon Aug  5 14:26:03 2019
 
 @author: ben
 """
-import lin_op
+from LSsurf import lin_op
 import numpy as np
 
 def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'):

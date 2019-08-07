@@ -109,8 +109,8 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 	fd = {}
 	fd['zs'] = np.squeeze(fid1.variables['zs'][:].copy())
 	# fd['FirnAir'] = np.squeeze(fid2.variables['FirnAir'][:].copy())
-	fd['lon'] = fid1.variables['lon'][:,:].data[:,:].copy()
-	fd['lat'] = fid1.variables['lat'][:,:].data[:,:].copy()
+	fd['lon'] = fid1.variables['lon'][:,:].copy()
+	fd['lat'] = fid1.variables['lat'][:,:].copy()
 	fd['time'] = fid1.variables['time'][:].copy()
 	#-- invalid data
 	fv = np.float(fid1.variables['zs']._FillValue)

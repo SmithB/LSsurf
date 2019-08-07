@@ -271,7 +271,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             data.z -= data.h_firn
     elif firn_correction == 'RACMO':
         if hemisphere==1:
-            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)})
+            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)}[1])
             data.z -= data.h_firn
     # run the fit
     S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,

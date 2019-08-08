@@ -35,6 +35,7 @@ PYTHON DEPENDENCIES:
 UPDATE HISTORY:
 	Updated 08/2019: convert to model coordinates (rotated pole lat/lon)
 		and interpolate using N-dimensional functions
+		added rotation parameters for Antarctic models (XANT27,ASE055,XPEN055)
 	Written 07/2019
 """
 from __future__ import print_function
@@ -86,6 +87,9 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 		FIRN_DIRECTORY = ['RACMO','ANT27_1979-2016']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
+		#-- rotation parameters
+		rot_lat = -180.0
+		rot_lon = 10.0
 	elif (m == 'ASE055'):
 		#-- filename and directory for input ASE055 file
 		height_file = 'FDM_zs_ASE055_1979-2015.nc'
@@ -93,6 +97,9 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 		FIRN_DIRECTORY = ['RACMO','ASE055_1979-2015']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
+		#-- rotation parameters
+		rot_lat = 167.0
+		rot_lon = 53.0
 	elif (m == 'XPEN055'):
 		#-- filename and directory for input XPEN055 file
 		height_file = 'FDM_zs_XPEN055_1979-2016.nc'
@@ -100,6 +107,9 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 		FIRN_DIRECTORY = ['RACMO','XPEN055_1979-2016']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
+		#-- rotation parameters
+		rot_lat = -180.0
+		rot_lon = 30.0
 
 	#-- Open the RACMO NetCDF file for reading
 	ddir = os.path.join(base_dir,*FIRN_DIRECTORY)

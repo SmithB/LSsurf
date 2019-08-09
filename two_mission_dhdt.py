@@ -108,9 +108,7 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         delete_file, blacklist=check_rgt_cycle_blacklist(rgt_cycle=[D.rgt[0], D.cycle_number[0]],  blacklist=blacklist)
         if delete_file==0:
             D1.append(D)
-        else:
-            print("deleting %s" % D.filename)
-            
+
     for ind, D in enumerate(D1):
         try:
             segDifferenceFilter(D, setValid=False, toNaN=True, tol=seg_diff_tol)

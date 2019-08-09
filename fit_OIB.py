@@ -194,6 +194,7 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=n
     if glob_str is not None:
         files += glob.glob(glob_str)
     h=[]
+    zero_files=[]
     for file in files:
         try:
             D=mapData().from_h5(file, group='/dz/', field_mapping={'z':'dz'})
@@ -203,13 +204,16 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=n
                 h.append(plt.imshow((D.z[:,:,t_slice[1]]-D.z[:,:,t_slice[0]])/(D.t[t_slice[1]]-D.t[t_slice[0]]), \
                             extent=D.extent, vmin=caxis[0], vmax=caxis[1], label=file, origin='lower',
                             cmap="Spectral"))
+                if np.all(D.z.ravel()==0):
+                    #print("All-zero dz for file = %s" % file)
+                    zero_files.append(file)
         except KeyError as e:
             print("Error for file "+file)
             print(e)
 
     plt.axis('tight');
     plt.axis('equal');
-    return h
+    return h, zero_files
 
 
 def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  hemisphere=1, reference_epoch=None, D=None, N_subset=8, Edit_only=False, sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, laser_only=False, firn_correction=False):
@@ -271,8 +275,19 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             data.z -= data.h_firn
     elif firn_correction == 'RACMO':
         if hemisphere==1:
-            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)}[1])
+            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)[0]})
             data.z -= data.h_firn
+    elif firn_correction == "RACMO_fac":
+        if hemisphere==1:
+            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN11', data.time, data.x, data.y)[1]})
+            data.z -= data.h_firn
+    #report data counts
+    vals=[]
+    for val, sensor in sensor_dict.items():
+        print("for %s found %d data" %(sensor, np.sum(data.sensor==val)))
+        vals += [val]
+    print("for DEMs, found %d data" % np.sum(np.in1d(data.sensor, np.array(vals))==0))
+    
     # run the fit
     S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
                      reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False,

@@ -51,13 +51,13 @@ def edit_data_by_subset_fit(N_subset, args):
         if 'subset_iterations' in args:
             sub_args['max_iterations']=args['subset_iterations']
         tic=time()
-        if args['VERBOSE']:
-            print("working on subset %d, XR=[%d, %d], YR=[%d, %d], f_tot=%2.2f" % (count, x0-W_subset['x']/2, x0+W_subset['x']/2, y0-W_subset['x']/2, y0+W_subset['x']/2, np.mean(in_bounds)))
+        #if args['VERBOSE']:
+        #    print("working on subset %d, XR=[%d, %d], YR=[%d, %d], f_tot=%2.2f" % (count, x0-W_subset['x']/2, x0+W_subset['x']/2, y0-W_subset['x']/2, y0+W_subset['x']/2, np.mean(in_bounds)))
 
         sub_fit=smooth_xyt_fit(**sub_args)
         t_fit=time()-tic
-        if args['VERBOSE']:
-            print("dt=%3.2f, t expected for all=%3.2f"  % (t_fit, t_fit*subset_ctrs[0].size))
+        #if args['VERBOSE']:
+        #    print("dt=%3.2f, t expected for all=%3.2f"  % (t_fit, t_fit*subset_ctrs[0].size))
         in_tight_bounds_sub = \
             (sub_args['data'].x > x0-W_subset['x']/4) & (sub_args['data'].x < x0+W_subset['x']/4) & \
             (sub_args['data'].y > y0-W_subset['y']/4) & (sub_args['data'].y < y0+W_subset['y']/4)
@@ -210,7 +210,7 @@ def smooth_xyt_fit(**kwargs):
     for field in required_fields:
         if field not in kwargs:
             raise ValueError("%s must be defined", field)
-    valid_data=np.ones_like(args['data'].x, dtype=bool)
+    valid_data = np.isfinite(args['data'].z) #np.ones_like(args['data'].x, dtype=bool)
     timing=dict()
 
     if args['N_subset'] is not None:
@@ -239,8 +239,12 @@ def smooth_xyt_fit(**kwargs):
 
     # if repeat_res is given, resample the data to include only repeat data (to within a spatial tolerance of repeat_res)
     if args['repeat_res'] is not None:
+        N_before_repeat=np.sum(valid_data)          
         valid_data[valid_data]=valid_data[valid_data] & \
             select_repeat_data(args['data'].copy().subset(valid_data), grids, args['repeat_dt'], args['repeat_res'], reference_time=grids['t'].ctrs[0][args['reference_epoch']])
+        if args['VERBOSE']:
+            print("before repeat editing found %d data" % N_before_repeat)
+            print("after repeat editing found %d data" % valid_data.sum())
 
     # subset the data based on the valid mask
     data=args['data'].copy().subset(valid_data)

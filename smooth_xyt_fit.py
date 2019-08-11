@@ -285,9 +285,9 @@ def smooth_xyt_fit(**kwargs):
 
     if args['data_slope_sensors'] is not None:
         bias_model['E_slope']=args['E_slope']
-        G_slope_bias, Gc_slope_bias, Cvals_slope_bias, bias_model= data_slope_bias(data,  bias_model, col_0=G_data.col_N)
+        G_slope_bias, Gc_slope_bias, Cvals_slope_bias, bias_model= data_slope_bias(data,  bias_model, sensors=args['data_slope_sensors'], col_0=G_data.col_N)
         G_data.add(G_slope_bias)
-        constraint_op_list.add(Gc_slope_bias)
+        constraint_op_list.append(Gc_slope_bias)
     # put the equations together
     Gc=lin_op(None, name='constraints').vstack(constraint_op_list)
     N_eq=G_data.N_eq+Gc.N_eq

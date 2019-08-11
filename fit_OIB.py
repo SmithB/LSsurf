@@ -279,20 +279,21 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             data.z -= data.h_firn
     elif firn_correction == "RACMO_fac":
         if hemisphere==1:
-            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN11', data.time, data.x, data.y)[1]})
-            data.z -= data.h_firn
+            data.assign({'fac':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN11', data.time, data.x, data.y)[1]})
+            data.z -= data.fac
     #report data counts
     vals=[]
     for val, sensor in sensor_dict.items():
-        print("for %s found %d data" %(sensor, np.sum(data.sensor==val)))
-        vals += [val]
+        if val < 5:
+            print("for %s found %d data" %(sensor, np.sum(data.sensor==val)))
+            vals += [val]
     print("for DEMs, found %d data" % np.sum(np.in1d(data.sensor, np.array(vals))==0))
     
     # run the fit
     S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
                      reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False,
                      bias_params=['day','sensor'], repeat_res=250, max_iterations=4, srs_WKT=SRS_proj4, DEM_sensors=DEM_sensors,
-                     VERBOSE=True, Edit_only=Edit_only)
+                     VERBOSE=True, Edit_only=Edit_only, data_slope_sensors=DEM_sensors)
     if Edit_only:
         print('N_subsets=%d, t=%f' % ( N_subset, S['timing']['edit_by_subset']))
 

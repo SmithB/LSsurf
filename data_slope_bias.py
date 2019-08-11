@@ -5,7 +5,7 @@ Created on Mon Aug  5 14:26:03 2019
 
 @author: ben
 """
-from LSsurf import lin_op
+from LSsurf.lin_op import lin_op
 import numpy as np
 
 def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'):
@@ -23,7 +23,7 @@ def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'
              E_bias: expected value for each bias parameter
              bias_model: bias model dict as defined in assign_bias_ID
     """
-    if ['slope_bias_dict'] not in bias_model:
+    if 'slope_bias_dict' not in bias_model:
         bias_model['slope_bias_dict']={}
 
     col_N=col_0+2*len(sensors)
@@ -32,20 +32,20 @@ def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'
     for d_col_1, sensor in enumerate(sensors):
         rows=np.flatnonzero(data.sensor==sensor)
         bias_model['slope_bias_dict'][sensor]=col_0+np.array([0, 1])
-        for d_col_2, var in enumerate('x', 'y'):
-            delta=getattr(data, var)
+        for d_col_2, var in enumerate(['x', 'y']):
+            delta=getattr(data, var)[rows]
             delta -= np.nanmean(delta)
             rr += [rows]
-            cc += [np.ones_like(rows, dtype=int) + int(col_0+d_col_1+d_col_2)]
+            cc += [np.zeros_like(rows, dtype=int) + int(col_0+d_col_1+d_col_2)]
             vv += [delta]
 
-    G_bias = lin_op(col_0=col_0, col_N=col_N)
+    G_bias = lin_op(col_0=col_0, col_N=col_N, name=op_name)
     G_bias.r = np.concatenate(rr)
     G_bias.c = np.concatenate(cc)
     G_bias.v = np.concatenate(vv)
 
     ii=np.arange(col_0, col_N, dtype=int)
-    Gc_bias=lin_op(name='constraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii,col=col_0+ii)
-    E_bias=bias_model['E_bias_slope']+np.zeros(2*len(sensors))
+    Gc_bias=lin_op(name='constraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii, col=ii)
+    E_bias=bias_model['E_slope']+np.zeros(2*len(sensors))
 
     return G_bias, Gc_bias, E_bias, bias_model

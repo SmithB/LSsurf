@@ -130,6 +130,17 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
     return D1
 
 def reread_data_from_files(xy0, W, thedir, template='E%d_N%d.h5'):
+    """
+    Read data from a set of output (fit) files
+    
+    Inputs:
+        xy0: 2-tuple box center
+        W: box width
+        thedir: directory to search
+        template: template for file format
+    For a directory of files, find the files overlapping the requested box, and 
+    select the data closest to the box center
+    """
     d_i, d_j = np.meshgrid([-1., 0, 1.], [-1., 0., 1.])
     data_list=list()
     #plt.figure()

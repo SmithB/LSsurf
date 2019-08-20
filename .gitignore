@@ -8,3 +8,9 @@ old
 __pycache__
 *.so
 *.txt
+timing_map.py
+sparseqr
+temp.py
+PIG_data_plot.py
+run_OIB_tests.py
+twoSlope_dhdt.py

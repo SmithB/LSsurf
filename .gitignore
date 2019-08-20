@@ -1,0 +1,10 @@
+*~
+\#*
+build/
+*.c
+.DS_store
+*.h5
+old
+__pycache__
+*.so
+*.txt

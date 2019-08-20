@@ -20,6 +20,8 @@ COMMAND LINE OPTIONS:
 	--coordinate=X: Polar Stereographic X and Y of point
 	--date=X: Date to interpolate in year-decimal format
 	--csv=X: Read dates and coordinates from a csv file
+	--fill-value: Replace invalid values with fill value
+		(default uses original fill values from data file)
 
 PYTHON DEPENDENCIES:
 	numpy: Scientific Computing Tools For Python
@@ -36,6 +38,7 @@ UPDATE HISTORY:
 	Updated 08/2019: convert to model coordinates (rotated pole lat/lon)
 		and interpolate using N-dimensional functions
 		added rotation parameters for Antarctic models (XANT27,ASE055,XPEN055)
+		added option to change the fill value for invalid points
 	Written 07/2019
 """
 from __future__ import print_function
@@ -51,6 +54,8 @@ import scipy.spatial
 import scipy.interpolate
 
 #-- PURPOSE: set the projection parameters based on the firn model shortname
+#-- these are the default projections of the coordinates being interpolated into
+#-- and not the projection of the models (interpolate into polar stereographic)
 def set_projection(FIRN_MODEL):
 	if FIRN_MODEL in ('XANT27','ASE055','XPEN055'):
 		projection_flag = 'EPSG:3031'
@@ -59,51 +64,55 @@ def set_projection(FIRN_MODEL):
 	return projection_flag
 
 #-- PURPOSE: read and interpolate RACMO2.3 firn corrections
-def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
-	if (m == 'FGRN11'):
+def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
+	VARIABLE='zs', FILL_VALUE=None):
+
+	#-- set parameters based on input model
+	FIRN_FILE = {}
+	if (MODEL == 'FGRN11'):
 		#-- filename and directory for input FGRN11 file
-		height_file = 'FDM_zs_FGRN11_1960-2016.nc'
-		firnair_file = 'FDM_FirnAir_FGRN11_1960-2016.nc'
+		FIRN_FILE['zs'] = 'FDM_zs_FGRN11_1960-2016.nc'
+		FIRN_FILE['FirnAir'] = 'FDM_FirnAir_FGRN11_1960-2016.nc'
 		FIRN_DIRECTORY = ['RACMO','FGRN11_1960-2016']
 		#-- time is year decimal from 1960-01-01 at time_step 10 days
 		time_step = 10.0/365.25
 		#-- rotation parameters
 		rot_lat = -18.0
 		rot_lon = -37.5
-	elif (m == 'FGRN055'):
+	elif (MODEL == 'FGRN055'):
 		#-- filename and directory for input FGRN055 file
-		height_file = 'FDM_zs_FGRN055_1960-2017_interpol.nc'
-		firnair_file = 'FDM_FirnAir_FGRN055_1960-2017_interpol.nc'
+		FIRN_FILE['zs'] = 'FDM_zs_FGRN055_1960-2017_interpol.nc'
+		FIRN_FILE['FirnAir'] = 'FDM_FirnAir_FGRN055_1960-2017_interpol.nc'
 		FIRN_DIRECTORY = ['RACMO','FGRN055_1960-2017']
 		#-- time is year decimal from 1960-01-01 at time_step 10 days
 		time_step = 10.0/365.25
 		#-- rotation parameters
 		rot_lat = -18.0
 		rot_lon = -37.5
-	elif (m == 'XANT27'):
+	elif (MODEL == 'XANT27'):
 		#-- filename and directory for input XANT27 file
-		height_file = 'FDM_zs_ANT27_1979-2016.nc'
-		firnair_file = 'FDM_FirnAir_ANT27_1979-2016.nc'
-		FIRN_DIRECTORY = ['RACMO','ANT27_1979-2016']
+		FIRN_FILE['zs'] = 'FDM_zs_ANT27_1979-2016.nc'
+		FIRN_FILE['FirnAir'] = 'FDM_FirnAir_ANT27_1979-2016.nc'
+		FIRN_DIRECTORY = ['RACMO','XANT27_1979-2016']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
 		#-- rotation parameters
 		rot_lat = -180.0
 		rot_lon = 10.0
-	elif (m == 'ASE055'):
+	elif (MODEL == 'ASE055'):
 		#-- filename and directory for input ASE055 file
-		height_file = 'FDM_zs_ASE055_1979-2015.nc'
-		firnair_file = 'FDM_FirnAir_ASE055_1979-2015.nc'
+		FIRN_FILE['zs'] = 'FDM_zs_ASE055_1979-2015.nc'
+		FIRN_FILE['FirnAir'] = 'FDM_FirnAir_ASE055_1979-2015.nc'
 		FIRN_DIRECTORY = ['RACMO','ASE055_1979-2015']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
 		#-- rotation parameters
 		rot_lat = 167.0
 		rot_lon = 53.0
-	elif (m == 'XPEN055'):
+	elif (MODEL == 'XPEN055'):
 		#-- filename and directory for input XPEN055 file
-		height_file = 'FDM_zs_XPEN055_1979-2016.nc'
-		firnair_file = 'FDM_FirnAir_XPEN055_1979-2016.nc'
+		FIRN_FILE['zs'] = 'FDM_zs_XPEN055_1979-2016.nc'
+		FIRN_FILE['FirnAir'] = 'FDM_FirnAir_XPEN055_1979-2016.nc'
 		FIRN_DIRECTORY = ['RACMO','XPEN055_1979-2016']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
@@ -113,25 +122,22 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 
 	#-- Open the RACMO NetCDF file for reading
 	ddir = os.path.join(base_dir,*FIRN_DIRECTORY)
-	fid1 = netCDF4.Dataset(os.path.join(ddir,height_file), 'r')
-	# fid2 = netCDF4.Dataset(os.path.join(ddir,firnair_file), 'r')
+	fileID = netCDF4.Dataset(os.path.join(ddir,FIRN_FILE[VARIABLE]), 'r')
 	#-- Get data from each netCDF variable and remove singleton dimensions
 	fd = {}
-	fd['zs'] = np.squeeze(fid1.variables['zs'][:].copy())
-	# fd['FirnAir'] = np.squeeze(fid2.variables['FirnAir'][:].copy())
-	fd['lon'] = fid1.variables['lon'][:,:].copy()
-	fd['lat'] = fid1.variables['lat'][:,:].copy()
-	fd['time'] = fid1.variables['time'][:].copy()
-	#-- invalid data
-	fv = np.float(fid1.variables['zs']._FillValue)
+	fd[VARIABLE] = np.squeeze(fileID.variables[VARIABLE][:].copy())
+	fd['lon'] = fileID.variables['lon'][:,:].copy()
+	fd['lat'] = fileID.variables['lat'][:,:].copy()
+	fd['time'] = fileID.variables['time'][:].copy()
+	#-- invalid data value
+	fv = np.float(fileID.variables[VARIABLE]._FillValue)
 	#-- input shape of RACMO firn data
-	nt,ny,nx = np.shape(fd['zs'])
+	nt,ny,nx = np.shape(fd[VARIABLE])
 	#-- close the NetCDF files
-	fid1.close()
-	# fid2.close()
+	fileID.close()
 
 	#-- indices of specified ice mask
-	i,j = np.nonzero(fd['zs'][0,:,:] != fv)
+	i,j = np.nonzero(fd[VARIABLE][0,:,:] != fv)
 	#-- create mask object for interpolating data
 	fd['mask'] = np.ones((ny,nx),dtype=np.bool)
 	fd['mask'][i,j] = False
@@ -139,6 +145,7 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 	#-- rotated pole longitude and latitude of input model (model coordinates)
 	xg,yg = rotate_coordinates(fd['lon'], fd['lat'], rot_lon, rot_lat)
 	#-- recreate arrays to fix small floating point errors
+	#-- (ensure that arrays are monotonically increasing)
 	fd['x'] = np.linspace(np.mean(xg[:,0]),np.mean(xg[:,-1]),nx)
 	fd['y'] = np.linspace(np.mean(yg[0,:]),np.mean(yg[-1,:]),ny)
 
@@ -152,31 +159,32 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 
 	#-- check that input points are within convex hull of valid model points
 	points = np.concatenate((xg[i,j,None],yg[i,j,None]),axis=1)
-	triangle = scipy.spatial.Delaunay(points, qhull_options='Qt Qbb Qc Qz')
+	triangle = scipy.spatial.Delaunay(points.data, qhull_options='Qt Qbb Qc Qz')
 	interp_points = np.concatenate((ix[:,None],iy[:,None]),axis=1)
 	valid = (triangle.find_simplex(interp_points) >= 0)
 
-	#-- output interpolated arrays of firn height and air content
-	interp_zs = np.full_like(tdec,fv,dtype=np.float)
-	interp_air = np.full_like(tdec,fv,dtype=np.float)
+	#-- output interpolated arrays of firn variable (height or firn air content)
+	interp_firn = np.full_like(tdec,fv,dtype=np.float)
 	#-- type designating algorithm used (1: interpolate, 2: backward, 3:forward)
 	interp_type = np.zeros_like(tdec,dtype=np.uint8)
+	#-- interpolation mask of invalid values
+	interp_mask = np.zeros_like(tdec,dtype=np.bool)
 
 	#-- find days that can be interpolated
 	date_indices = np.array((tdec - fd['time'].min())/time_step, dtype='i')
 	if np.any((date_indices >= 0) & (date_indices < nt) & valid):
 		#-- indices of dates for interpolated days
 		ind, = np.nonzero((date_indices >= 0) & (date_indices < nt) & valid)
-		#-- create an interpolator for firn elevation
-		ZI = scipy.interpolate.RegularGridInterpolator(
-			(fd['time'],fd['y'],fd['x']), fd['zs'])
-		#-- create an interpolator for firn air content
-		# AI = scipy.interpolate.RegularGridInterpolator(
-		# 	(fd['time'],fd['y'],fd['x']), fd['FirnAir'])
+		#-- create an interpolator for firn height or air content
+		RGI = scipy.interpolate.RegularGridInterpolator(
+			(fd['time'],fd['y'],fd['x']), fd[VARIABLE])
+		#-- create an interpolator for input mask
+		MI = scipy.interpolate.RegularGridInterpolator(
+			(fd['y'],fd['x']), fd['mask'])
 
 		#-- interpolate to points
-		interp_zs[ind] = ZI.__call__(np.c_[tdec[ind],iy[ind],ix[ind]])
-		# interp_air[ind] = AI.__call__(np.c_[tdec[ind],iy[ind],ix[ind]])
+		interp_firn[ind] = RGI.__call__(np.c_[tdec[ind],iy[ind],ix[ind]])
+		interp_mask[ind] = MI.__call__(np.c_[iy[ind],ix[ind]])
 		#-- set interpolation type (1: interpolated)
 		interp_type[ind] = 1
 
@@ -190,34 +198,27 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 		#-- calculate a regression model for calculating values
 		#-- read first 10 years of data to create regression model
 		N = 365
-		#-- spatially interpolate firn elevation to coordinates
-		ZS = np.zeros((count,N))
-		# AIR = np.zeros((count,N))
+		#-- spatially interpolate firn elevation or air content to coordinates
+		FIRN = np.zeros((count,N))
 		T = np.zeros((N))
 		#-- spatially interpolate mask to coordinates
 		mspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
 			fd['mask'].T, kx=1, ky=1)
-		mask = mspl.ev(ix[ind],iy[ind])
+		interp_mask[ind] = mspl.ev(ix[ind],iy[ind])
 		#-- create interpolated time series for calculating regression model
 		for k in range(N):
 			#-- time at k
 			T[k] = fd['time'][k]
-			#-- spatially interpolate firn elevation to coordinates
+			#-- spatially interpolate firn elevation or air content
 			fspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-				fd['zs'][k,:,:].T, kx=1, ky=1)
-			# #-- spatially interpolate firn air content to coordinates
-			# aspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-			# 	fd['FirnAir'][k,:,:].T, kx=1, ky=1)
+				fd[VARIABLE][k,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
-			ZS[:,k] = fspl.ev(ix[ind],iy[ind])
-			# AIR[:,k] = aspl.ev(ix[ind],iy[ind])
+			FIRN[:,k] = fspl.ev(ix[ind],iy[ind])
 
 		#-- calculate regression model
 		for n,v in enumerate(ind):
-			interp_zs[v] = regress_model(T, ZS[n,:], tdec[v], ORDER=2,
+			interp_firn[v] = regress_model(T, ZS[n,:], tdec[v], ORDER=2,
 				CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[0])
-			# interp_air[v] = regress_model(T, AIR[n,:], tdec[v], ORDER=2,
-			# 	CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[0])
 
 	#-- check if needing to extrapolate forward in time
 	count = np.count_nonzero((date_indices >= nt) & valid)
@@ -229,38 +230,37 @@ def interpolate_racmo_firn(base_dir, EPSG, m, tdec, X, Y):
 		#-- calculate a regression model for calculating values
 		#-- read last 10 years of data to create regression model
 		N = 365
-		#-- spatially interpolate firn elevation to coordinates
-		ZS = np.zeros((count,N))
-		# AIR = np.zeros((count,N))
+		#-- spatially interpolate firn elevation or air content to coordinates
+		FIRN = np.zeros((count,N))
 		T = np.zeros((N))
 		#-- spatially interpolate mask to coordinates
 		mspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
 			fd['mask'].T, kx=1, ky=1)
-		mask = mspl.ev(ix[ind],iy[ind])
+		interp_mask[ind] = mspl.ev(ix[ind],iy[ind])
 		#-- create interpolated time series for calculating regression model
 		for k in range(N):
 			kk = nt - N + k
 			#-- time at k
 			T[k] = fd['time'][kk]
-			#-- spatially interpolate firn elevation to coordinates
+			#-- spatially interpolate firn elevation or air content
 			fspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-				fd['zs'][kk,:,:].T, kx=1, ky=1)
-			# #-- spatially interpolate firn air content to coordinates
-			# aspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-			# 	fd['FirnAir'][kk,:,:].T, kx=1, ky=1)
+				fd[VARIABLE][kk,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
-			ZS[:,k] = fspl.ev(ix[ind],iy[ind])
-			# AIR[:,k] = aspl.ev(ix[ind],iy[ind])
+			FIRN[:,k] = fspl.ev(ix[ind],iy[ind])
 
 		#-- calculate regression model
 		for n,v in enumerate(ind):
-			interp_zs[v] = regress_model(T, ZS[n,:], tdec[v], ORDER=2,
+			interp_firn[v] = regress_model(T, FIRN[n,:], tdec[v], ORDER=2,
 				CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[-1])
-			# interp_air[v] = regress_model(T, AIR[n,:], tdec[v], ORDER=2,
-			# 	CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[-1])
+
+	#-- replace fill value if specified
+	if FILL_VALUE:
+		ind, = np.nonzero((interp_firn == fv) | interp_mask)
+		interp_firn[ind] = FILL_VALUE
+		fv = FILL_VALUE
 
 	#-- return the interpolated values
-	return (interp_zs,interp_air,interp_type,fv)
+	return (interp_firn,interp_type,fv)
 
 #-- PURPOSE: calculate rotated pole coordinates
 def rotate_coordinates(lon, lat, rot_lon, rot_lat):
@@ -316,9 +316,10 @@ def regress_model(t_in, d_in, t_out, ORDER=2, CYCLES=None, RELATIVE=None):
 #-- PURPOSE: interpolate RACMO firn height to a set of coordinates and times
 #-- wrapper function to extract EPSG and print to terminal
 def racmo_interp_firn_height(base_dir, MODEL, COORDINATES=None,
-	DATES=None, CSV=None):
+	DATES=None, CSV=None, FILL_VALUE=None):
 
 	#-- get projection information from model shortname
+	#-- this is the projection of the coordinates being interpolated into
 	EPSG = set_projection(MODEL)
 
 	#-- read coordinates and dates from a csv file (X,Y,year decimal)
@@ -339,7 +340,10 @@ def racmo_interp_firn_height(base_dir, MODEL, COORDINATES=None,
 		tdec = np.array(DATES, dtype=np.float)
 
 	#-- read and interpolate/extrapolate RACMO2.3 firn corrections
-	zs,air,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y)
+	zs,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
+		VARIABLE='zs', FILL_VALUE=FILL_VALUE)
+	air,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
+		VARIABLE='FirnAir', FILL_VALUE=FILL_VALUE)
 	interpolate_types = ['invalid','interpolated','backward','forward']
 	for z,a,t in zip(zs,air,itype):
 		print(z,a,interpolate_types[t])
@@ -356,12 +360,14 @@ def usage():
 	print('\tXPEN055: 5.5km Antarctic Peninsula RACMO2.3p2')
 	print(' --coordinate=X\tPolar Stereographic X and Y of point')
 	print(' --date=X\t\tDates to interpolate in year-decimal format')
-	print(' --csv=X\t\tRead dates and coordinates from a csv file\n')
+	print(' --csv=X\t\tRead dates and coordinates from a csv file')
+	print(' --fill-value\tReplace invalid values with fill value\n')
 
 #-- Main program that calls racmo_interp_firn_height()
 def main():
 	#-- Read the system arguments listed after the program
-	long_options = ['help','directory=','smb=','coordinate=','date=','csv=']
+	long_options = ['help','directory=','smb=','coordinate=','date=','csv=',
+		'fill-value=']
 	optlist,arglist = getopt.getopt(sys.argv[1:], 'hD:S:', long_options)
 
 	#-- data directory
@@ -373,6 +379,8 @@ def main():
 	DATES = None
 	#-- read coordinates and dates from csv file
 	CSV = None
+	#-- invalid value (default is from RACMO file)
+	FILL_VALUE = None
 	#-- extract parameters
 	for opt, arg in optlist:
 		if opt in ('-h','--help'):
@@ -388,10 +396,12 @@ def main():
 			DATES = arg.split(',')
 		elif opt in ("--csv"):
 			CSV = os.path.expanduser(arg)
+		elif opt in ("--fill-value"):
+			FILL_VALUE = eval(arg)
 
 	#-- run program with parameters
 	racmo_interp_firn_height(base_dir, MODEL, COORDINATES=COORDINATES,
-		DATES=DATES, CSV=CSV)
+		DATES=DATES, CSV=CSV, FILL_VALUE=FILL_VALUE)
 
 #-- run main program
 if __name__ == '__main__':

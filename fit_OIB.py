@@ -275,11 +275,11 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             data.z -= data.h_firn
     elif firn_correction == 'RACMO':
         if hemisphere==1:
-            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)[0]})
+            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y, VARIABLE='zs', FILL_VALUE=np.nan)[0]})
             data.z -= data.h_firn
     elif firn_correction == "RACMO_fac":
         if hemisphere==1:
-            data.assign({'fac':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN11', data.time, data.x, data.y)[1]})
+            data.assign({'fac':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN11', data.time, data.x, data.y, VARIABLE='FirnAir', FILL_VALUE=np.nan)[0]})
             data.z -= data.fac
     #report data counts
     vals=[]
@@ -288,7 +288,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             print("for %s found %d data" %(sensor, np.sum(data.sensor==val)))
             vals += [val]
     print("for DEMs, found %d data" % np.sum(np.in1d(data.sensor, np.array(vals))==0))
-    
+
     # run the fit
     S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
                      reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False,

@@ -26,18 +26,20 @@ def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'
     if 'slope_bias_dict' not in bias_model:
         bias_model['slope_bias_dict']={}
 
-    col_N=col_0+2*len(sensors)
-    rr, cc, vv=[[], [], []]
+    these_sensors=sensors[np.in1d(sensors, data.sensor)]
 
-    for d_col_1, sensor in enumerate(sensors):
+    col_N=col_0+2*len(these_sensors)
+    rr, cc, vv=[[], [], []]
+    
+    for d_col_1, sensor in enumerate(these_sensors):
         rows=np.flatnonzero(data.sensor==sensor)
-        bias_model['slope_bias_dict'][sensor]=col_0+np.array([0, 1])
+        bias_model['slope_bias_dict'][sensor]=col_0+d_col_1*2+np.array([0, 1])
         for d_col_2, var in enumerate(['x', 'y']):
             delta=getattr(data, var)[rows]
             delta -= np.nanmean(delta)
             rr += [rows]
-            cc += [np.zeros_like(rows, dtype=int) + int(col_0+d_col_1+d_col_2)]
-            vv += [delta]
+            cc += [np.zeros_like(rows, dtype=int) + int(col_0+d_col_1*2+d_col_2)]
+            vv += [delta/1000]
 
     G_bias = lin_op(col_0=col_0, col_N=col_N, name=op_name)
     G_bias.r = np.concatenate(rr)
@@ -45,7 +47,7 @@ def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'
     G_bias.v = np.concatenate(vv)
 
     ii=np.arange(col_0, col_N, dtype=int)
-    Gc_bias=lin_op(name='constraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii, col=ii)
-    E_bias=bias_model['E_slope']+np.zeros(2*len(sensors))
+    Gc_bias=lin_op(name='constraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii-ii[0], col=ii)
+    E_bias=bias_model['E_slope']+np.zeros(2*len(these_sensors))
 
     return G_bias, Gc_bias, E_bias, bias_model

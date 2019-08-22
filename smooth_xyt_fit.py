@@ -200,6 +200,7 @@ def smooth_xyt_fit(**kwargs):
     'N_subset': None,
     'bias_params': None,
     'repeat_res':None,
+    'converge_tol_dz':0.05,
     'repeat_dt': 1,
     'Edit_only': False,
     'dzdt_lags':[1, 4],
@@ -285,7 +286,7 @@ def smooth_xyt_fit(**kwargs):
 
     if args['data_slope_sensors'] is not None:
         bias_model['E_slope']=args['E_slope']
-        G_slope_bias, Gc_slope_bias, Cvals_slope_bias, bias_model= data_slope_bias(data,  bias_model, sensors=args['data_slope_sensors'], col_0=G_data.col_N)
+        G_slope_bias, Gc_slope_bias, Cvals_slope_bias, bias_model= data_slope_bias(data,  bias_model, sensors=args['data_slope_sensors'],  col_0=G_data.col_N)
         G_data.add(G_slope_bias)
         constraint_op_list.append(Gc_slope_bias)
     # put the equations together
@@ -320,7 +321,8 @@ def smooth_xyt_fit(**kwargs):
     # define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution:
     # Find the identify the rows and columns that match the reference epoch
     temp_r, temp_c=np.meshgrid(np.arange(0, grids['dz'].shape[0]), np.arange(0, grids['dz'].shape[1]))
-    z02_mask=grids['dz'].global_ind([temp_r.transpose().ravel(), temp_c.transpose().ravel(), args['reference_epoch']+np.zeros_like(temp_r).ravel()])
+    z02_mask=grids['dz'].global_ind([temp_r.transpose().ravel(), temp_c.transpose().ravel(),\
+                  args['reference_epoch']+np.zeros_like(temp_r).ravel()])
 
     # Identify all of the DOFs that do not include the reference epoch
     cols=np.arange(G_data.col_N, dtype='int')
@@ -328,7 +330,8 @@ def smooth_xyt_fit(**kwargs):
     # Generate a matrix that has diagonal elements corresponding to all DOFs except the reference epoch.
     # Multiplying this by a matrix with columns for all model parameters yeilds a matrix with no columns
     # corresponding to the reference epoch.
-    Ip_c=sp.coo_matrix((np.ones_like(include_cols), (include_cols, np.arange(include_cols.size))), shape=(Gc.col_N, include_cols.size)).tocsc()
+    Ip_c=sp.coo_matrix((np.ones_like(include_cols), (include_cols, np.arange(include_cols.size))), \
+                       shape=(Gc.col_N, include_cols.size)).tocsc()
 
     # eliminate the columns for the model variables that are set to zero
     Gcoo=Gcoo.dot(Ip_c)
@@ -342,36 +345,51 @@ def smooth_xyt_fit(**kwargs):
         inTSE=np.where(data.three_sigma_edit)[0]
     else:
         inTSE=np.arange(G_data.N_eq, dtype=int)
+    inTSE_last = np.zeros([0])
     if args['VERBOSE']:
         print("initial: %d:" % G_data.r.max())
     tic_iteration=time()
     for iteration in range(args['max_iterations']):
         # build the parsing matrix that removes invalid rows
-        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+inTSE.size), (np.arange(Gc.N_eq+inTSE.size), np.concatenate((inTSE, cov_rows)))), shape=(Gc.N_eq+inTSE.size, Gcoo.shape[0])).tocsc()
+        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+inTSE.size), (np.arange(Gc.N_eq+inTSE.size), np.concatenate((inTSE, cov_rows)))), \
+                           shape=(Gc.N_eq+inTSE.size, Gcoo.shape[0])).tocsc()
 
         m0_last=m0
         if args['VERBOSE']:
             print("starting qr solve for iteration %d" % iteration)
         # solve the equations
-        tic=time(); m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))); timing['sparseqr_solve']=time()-tic
-
-        # quit if the solution is too similar to the previous solution
-        if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < 0.05) and (iteration > 2):
-            break
+        tic=time(); 
+        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))); 
+        timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
         rs_data=(data.z-G_data.toCSR().dot(m0))/data.sigma
         # calculate the robust standard deviation of the scaled residuals for the selected data
         sigma_hat=RDE(rs_data[inTSE])
+        
+        # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         inTSE_last=inTSE
-        # select the data that are within 3*sigma of the solution
-        inTSE=np.where(np.abs(rs_data)<3.0*np.maximum(1,sigma_hat))[0]
-        if args['VERBOSE']:
-            print('found %d in TSE, sigma_hat=%3.3f' % (inTSE.size, sigma_hat))
-        if (sigma_hat <= 1 or( inTSE.size == inTSE_last.size and np.all( inTSE_last == inTSE ))) and (iteration > 2):
+        inTSE = np.flatnonzero(np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
+        
+        # quit if the solution is too similar to the previous solution
+        if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > 2):
             if args['VERBOSE']:
-                print("sigma_hat LT 1, exiting")
+                print("Solution identical to previous iteration with tolerance %3.1f, exiting after iteration %d" % (args['converge_tol_dz'], iteration))
             break
+        # select the data that are within 3*sigma of the solution
+        if args['VERBOSE']:
+            print('found %d in TSE, sigma_hat=%3.3f' % ( inTSE.size, sigma_hat ))
+        if iteration > 0:
+            if inTSE.size == inTSE_last.size and np.all( inTSE_last == inTSE ):
+                if args['VERBOSE']:
+                    print("filtering unchanged, exiting after iteration %d" % iteration)
+                break 
+        if iteration >= 2:
+            if sigma_hat <= 1:
+                if args['VERBOSE']:
+                    print("sigma_hat LT 1, exiting after iteration %d" % iteration)
+                break             
+         
     timing['iteration']=time()-tic_iteration
     inTSE=inTSE_last
     valid_data[valid_data]=(np.abs(rs_data)<3.0*np.maximum(1, sigma_hat))

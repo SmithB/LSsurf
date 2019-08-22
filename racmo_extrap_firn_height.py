@@ -183,7 +183,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		extrap_type[ind] = 2
 		#-- query the search tree to find the N closest points
 		xy2 = np.concatenate((X[ind,None],Y[ind,None]),axis=1)
-		dist,indices = tree.query_radius(xy2, k=N, return_distance=True)
+		dist,indices = tree.query(xy2, k=N, return_distance=True)
 		#-- normalized weights if POWER > 0 (typically between 1 and 3)
 		#-- in the inverse distance weighting
 		power_inverse_distance = dist**(-POWER)
@@ -218,7 +218,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		extrap_type[ind] = 3
 		#-- query the search tree to find the N closest points
 		xy2 = np.concatenate((X[ind,None],Y[ind,None]),axis=1)
-		dist,indices = tree.query_radius(xy2, k=N, return_distance=True)
+		dist,indices = tree.query(xy2, k=N, return_distance=True)
 		#-- normalized weights if POWER > 0 (typically between 1 and 3)
 		#-- in the inverse distance weighting
 		power_inverse_distance = dist**(-POWER)

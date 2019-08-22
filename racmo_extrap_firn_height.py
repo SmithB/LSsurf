@@ -1,11 +1,16 @@
 #!/usr/bin/env python
 u"""
-racmo_interp_firn_height.py
+racmo_extrap_firn_height.py
 Written by Tyler Sutterley (08/2019)
 Interpolates and extrapolates firn heights to times and coordinates
 
+Uses fast nearest-neighbor search algorithms
+https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.BallTree.html
+https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.KDTree.html
+and inverse distance weighted interpolation to extrapolate spatially
+
 CALLING SEQUENCE:
-	python racmo_interp_firn_height.py --directory=<path> --smb=FGRN055 \
+	python racmo_extrap_firn_height.py --directory=<path> --smb=FGRN055 \
 		--coordinate=[-39e4,-133e4],[-39e4,-133e4] --date=2016.1,2018.1
 
 COMMAND LINE OPTIONS:
@@ -27,14 +32,16 @@ PYTHON DEPENDENCIES:
 	numpy: Scientific Computing Tools For Python
 		http://www.numpy.org
 		http://www.scipy.org/NumPy_for_Matlab_Users
-	scipy: Scientific Tools for Python
-		http://www.scipy.org/
 	netCDF4: Python interface to the netCDF C library
 	 	https://unidata.github.io/netcdf4-python/netCDF4/index.html
 	pyproj: Python interface to PROJ library
 		https://pypi.org/project/pyproj/
+	scikit-learn: Machine Learning in Python
+		http://scikit-learn.org/stable/index.html
+		https://github.com/scikit-learn/scikit-learn
 
 UPDATE HISTORY:
+	Forked 08/2019 from racmo_interp_firn_height.py
 	Updated 08/2019: convert to model coordinates (rotated pole lat/lon)
 		and interpolate using N-dimensional functions
 		added rotation parameters for Antarctic models (XANT27,ASE055,XPEN055)
@@ -50,8 +57,7 @@ import pyproj
 import getopt
 import netCDF4
 import numpy as np
-import scipy.spatial
-import scipy.interpolate
+from sklearn.neighbors import KDTree, BallTree
 
 #-- PURPOSE: set the projection parameters based on the firn model shortname
 #-- these are the default projections of the coordinates being interpolated into
@@ -64,8 +70,8 @@ def set_projection(FIRN_MODEL):
 	return projection_flag
 
 #-- PURPOSE: read and interpolate RACMO2.3 firn corrections
-def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-	VARIABLE='zs', FILL_VALUE=None):
+def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
+	SEARCH='BallTree', N=10, POWER=2.0, VARIABLE='zs', FILL_VALUE=None):
 
 	#-- set parameters based on input model
 	FIRN_FILE = {}
@@ -76,9 +82,6 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		FIRN_DIRECTORY = ['RACMO','FGRN11_1960-2016']
 		#-- time is year decimal from 1960-01-01 at time_step 10 days
 		time_step = 10.0/365.25
-		#-- rotation parameters
-		rot_lat = -18.0
-		rot_lon = -37.5
 	elif (MODEL == 'FGRN055'):
 		#-- filename and directory for input FGRN055 file
 		FIRN_FILE['zs'] = 'FDM_zs_FGRN055_1960-2017_interpol.nc'
@@ -86,9 +89,6 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		FIRN_DIRECTORY = ['RACMO','FGRN055_1960-2017']
 		#-- time is year decimal from 1960-01-01 at time_step 10 days
 		time_step = 10.0/365.25
-		#-- rotation parameters
-		rot_lat = -18.0
-		rot_lon = -37.5
 	elif (MODEL == 'XANT27'):
 		#-- filename and directory for input XANT27 file
 		FIRN_FILE['zs'] = 'FDM_zs_ANT27_1979-2016.nc'
@@ -96,9 +96,6 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		FIRN_DIRECTORY = ['RACMO','XANT27_1979-2016']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
-		#-- rotation parameters
-		rot_lat = -180.0
-		rot_lon = 10.0
 	elif (MODEL == 'ASE055'):
 		#-- filename and directory for input ASE055 file
 		FIRN_FILE['zs'] = 'FDM_zs_ASE055_1979-2015.nc'
@@ -106,9 +103,6 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		FIRN_DIRECTORY = ['RACMO','ASE055_1979-2015']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
-		#-- rotation parameters
-		rot_lat = 167.0
-		rot_lon = 53.0
 	elif (MODEL == 'XPEN055'):
 		#-- filename and directory for input XPEN055 file
 		FIRN_FILE['zs'] = 'FDM_zs_XPEN055_1979-2016.nc'
@@ -116,9 +110,6 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		FIRN_DIRECTORY = ['RACMO','XPEN055_1979-2016']
 		#-- time is year decimal from 1979-01-01 at time_step 10 days
 		time_step = 10.0/365.25
-		#-- rotation parameters
-		rot_lat = -180.0
-		rot_lon = 30.0
 
 	#-- Open the RACMO NetCDF file for reading
 	ddir = os.path.join(base_dir,*FIRN_DIRECTORY)
@@ -138,147 +129,129 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 
 	#-- indices of specified ice mask
 	i,j = np.nonzero(fd[VARIABLE][0,:,:] != fv)
-	#-- create mask object for interpolating data
-	fd['mask'] = np.ones((ny,nx),dtype=np.bool)
-	fd['mask'][i,j] = False
 
-	#-- rotated pole longitude and latitude of input model (model coordinates)
-	xg,yg = rotate_coordinates(fd['lon'], fd['lat'], rot_lon, rot_lat)
-	#-- recreate arrays to fix small floating point errors
-	#-- (ensure that arrays are monotonically increasing)
-	fd['x'] = np.linspace(np.mean(xg[:,0]),np.mean(xg[:,-1]),nx)
-	fd['y'] = np.linspace(np.mean(yg[0,:]),np.mean(yg[-1,:]),ny)
-
-	#-- convert projection from input coordinates (EPSG) to model coordinates
-	#-- RACMO models are rotated pole latitude and longitude
+	#-- convert RACMO latitude and longitude to input coordinates (EPSG)
 	proj1 = pyproj.Proj("+init={0}".format(EPSG))
 	proj2 = pyproj.Proj("+init=EPSG:{0:d}".format(4326))
-	ilon,ilat = pyproj.transform(proj1, proj2, X, Y)
-	#-- calculate rotated pole coordinates of input coordinates
-	ix,iy = rotate_coordinates(ilon, ilat, rot_lon, rot_lat)
+	xg,yg = pyproj.transform(proj2, proj1, fd['lon'], fd['lat'])
 
-	#-- check that input points are within convex hull of valid model points
-	points = np.concatenate((xg[i,j,None],yg[i,j,None]),axis=1)
-	triangle = scipy.spatial.Delaunay(points.data, qhull_options='Qt Qbb Qc Qz')
-	interp_points = np.concatenate((ix[:,None],iy[:,None]),axis=1)
-	valid = (triangle.find_simplex(interp_points) >= 0)
+	#-- construct search tree from original points
+	#-- can use either BallTree or KDTree algorithms
+	xy1 = np.concatenate((xg[i,j,None],yg[i,j,None]),axis=1)
+	tree = BallTree(xy1) if (SEARCH == 'BallTree') else KDTree(xy1)
 
 	#-- output interpolated arrays of firn variable (height or firn air content)
-	interp_firn = np.full_like(tdec,fv,dtype=np.float)
+	extrap_firn = np.full_like(tdec,fv,dtype=np.float)
 	#-- type designating algorithm used (1: interpolate, 2: backward, 3:forward)
-	interp_type = np.zeros_like(tdec,dtype=np.uint8)
-	#-- interpolation mask of invalid values
-	interp_mask = np.zeros_like(tdec,dtype=np.bool)
+	extrap_type = np.zeros_like(tdec,dtype=np.uint8)
 
 	#-- find days that can be interpolated
 	date_indices = np.array((tdec - fd['time'].min())/time_step, dtype='i')
-	if np.any((date_indices >= 0) & (date_indices < nt) & valid):
+	if np.any((date_indices >= 0) & (date_indices < nt)):
 		#-- indices of dates for interpolated days
-		ind, = np.nonzero((date_indices >= 0) & (date_indices < nt) & valid)
-		#-- create an interpolator for firn height or air content
-		RGI = scipy.interpolate.RegularGridInterpolator(
-			(fd['time'],fd['y'],fd['x']), fd[VARIABLE])
-		#-- create an interpolator for input mask
-		MI = scipy.interpolate.RegularGridInterpolator(
-			(fd['y'],fd['x']), fd['mask'])
-
-		#-- interpolate to points
-		interp_firn[ind] = RGI.__call__(np.c_[tdec[ind],iy[ind],ix[ind]])
-		interp_mask[ind] = MI.__call__(np.c_[iy[ind],ix[ind]])
-		#-- set interpolation type (1: interpolated)
-		interp_type[ind] = 1
+		ind, = np.nonzero((date_indices >= 0) & (date_indices < nt))
+		#-- set interpolation type (1: interpolated in time)
+		extrap_type[ind] = 1
+		#-- Find 2D interpolated surface
+		for k in np.unique(date_indices[ind]):
+			kk, = np.nonzero(date_indices==k)
+			npts = np.count_nonzero(date_indices==k)
+			#-- query the search tree to find the N closest points
+			xy2 = np.concatenate((X[kk,None],Y[kk,None]),axis=1)
+			dist,indices = tree.query(xy2, k=N, return_distance=True)
+			#-- normalized weights if POWER > 0 (typically between 1 and 3)
+			#-- in the inverse distance weighting
+			power_inverse_distance = dist**(-POWER)
+			s = np.sum(power_inverse_distance, axis=1)
+			w = power_inverse_distance/np.broadcast_to(s[:,None],(npts,N))
+			#-- firn height or air content for times before and after tdec
+			firn1 = fd[VARIABLE][k,i,j]
+			firn2 = fd[VARIABLE][k+1,i,j]
+			#-- linearly interpolate to date
+			dt = (tdec[kk] - fd['time'][k])/(fd['time'][k+1] - fd['time'][k])
+			#-- spatially extrapolate using inverse distance weighting
+			extrap_firn[kk] = (1.0-dt)*np.sum(w*firn1[indices],axis=1) + \
+				dt*np.sum(w*firn2[indices], axis=1)
 
 	#-- check if needing to extrapolate backwards in time
-	count = np.count_nonzero((date_indices < 0) & valid)
+	count = np.count_nonzero(date_indices < 0)
 	if (count > 0):
 		#-- indices of dates before firn model
-		ind, = np.nonzero((date_indices < 0) & valid)
-		#-- set interpolation type (2: extrapolated backwards)
-		interp_type[ind] = 2
+		ind, = np.nonzero(date_indices < 0)
+		npts = np.count_nonzero(date_indices < 0)
+		#-- set interpolation type (2: extrapolated backwards in time)
+		extrap_type[ind] = 2
+		#-- query the search tree to find the N closest points
+		xy2 = np.concatenate((X[ind,None],Y[ind,None]),axis=1)
+		dist,indices = tree.query_radius(xy2, k=N, return_distance=True)
+		#-- normalized weights if POWER > 0 (typically between 1 and 3)
+		#-- in the inverse distance weighting
+		power_inverse_distance = dist**(-POWER)
+		s = np.sum(power_inverse_distance, axis=1)
+		w = power_inverse_distance/np.broadcast_to(s[:,None],(npts,N))
 		#-- calculate a regression model for calculating values
 		#-- read first 10 years of data to create regression model
 		N = 365
 		#-- spatially interpolate firn elevation or air content to coordinates
 		FIRN = np.zeros((count,N))
 		T = np.zeros((N))
-		#-- spatially interpolate mask to coordinates
-		mspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-			fd['mask'].T, kx=1, ky=1)
-		interp_mask[ind] = mspl.ev(ix[ind],iy[ind])
 		#-- create interpolated time series for calculating regression model
 		for k in range(N):
 			#-- time at k
 			T[k] = fd['time'][k]
-			#-- spatially interpolate firn elevation or air content
-			fspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-				fd[VARIABLE][k,:,:].T, kx=1, ky=1)
-			#-- create numpy masked array of interpolated values
-			FIRN[:,k] = fspl.ev(ix[ind],iy[ind])
+			#-- spatially extrapolate firn elevation or air content
+			firn1 = fd[VARIABLE][k,i,j]
+			FIRN[:,k] = np.sum(w*firn1[indices],axis=1)
 
 		#-- calculate regression model
 		for n,v in enumerate(ind):
-			interp_firn[v] = regress_model(T, FIRN[n,:], tdec[v], ORDER=2,
+			extrap_firn[v] = regress_model(T, FIRN[n,:], tdec[v], ORDER=2,
 				CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[0])
 
 	#-- check if needing to extrapolate forward in time
-	count = np.count_nonzero((date_indices >= nt) & valid)
+	count = np.count_nonzero(date_indices >= nt)
 	if (count > 0):
 		#-- indices of dates after firn model
-		ind, = np.nonzero((date_indices >= nt) & valid)
-		#-- set interpolation type (3: extrapolated forward)
-		interp_type[ind] = 3
+		ind, = np.nonzero(date_indices >= nt)
+		npts = np.count_nonzero(date_indices >= nt)
+		#-- set interpolation type (3: extrapolated forward in time)
+		extrap_type[ind] = 3
+		#-- query the search tree to find the N closest points
+		xy2 = np.concatenate((X[ind,None],Y[ind,None]),axis=1)
+		dist,indices = tree.query_radius(xy2, k=N, return_distance=True)
+		#-- normalized weights if POWER > 0 (typically between 1 and 3)
+		#-- in the inverse distance weighting
+		power_inverse_distance = dist**(-POWER)
+		s = np.sum(power_inverse_distance, axis=1)
+		w = power_inverse_distance/np.broadcast_to(s[:,None],(npts,N))
 		#-- calculate a regression model for calculating values
 		#-- read last 10 years of data to create regression model
 		N = 365
 		#-- spatially interpolate firn elevation or air content to coordinates
 		FIRN = np.zeros((count,N))
 		T = np.zeros((N))
-		#-- spatially interpolate mask to coordinates
-		mspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-			fd['mask'].T, kx=1, ky=1)
-		interp_mask[ind] = mspl.ev(ix[ind],iy[ind])
 		#-- create interpolated time series for calculating regression model
 		for k in range(N):
 			kk = nt - N + k
 			#-- time at k
 			T[k] = fd['time'][kk]
-			#-- spatially interpolate firn elevation or air content
-			fspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-				fd[VARIABLE][kk,:,:].T, kx=1, ky=1)
-			#-- create numpy masked array of interpolated values
-			FIRN[:,k] = fspl.ev(ix[ind],iy[ind])
+			#-- spatially extrapolate firn elevation or air content
+			firn1 = fd[VARIABLE][kk,i,j]
+			FIRN[:,k] = np.sum(w*firn1[indices],axis=1)
 
 		#-- calculate regression model
 		for n,v in enumerate(ind):
-			interp_firn[v] = regress_model(T, FIRN[n,:], tdec[v], ORDER=2,
+			extrap_firn[v] = regress_model(T, FIRN[n,:], tdec[v], ORDER=2,
 				CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[-1])
 
 	#-- replace fill value if specified
 	if FILL_VALUE:
-		ind, = np.nonzero((interp_firn == fv) | interp_mask)
-		interp_firn[ind] = FILL_VALUE
+		ind, = np.nonzero(extrap_firn == fv)
+		extrap_firn[ind] = FILL_VALUE
 		fv = FILL_VALUE
 
 	#-- return the interpolated values
-	return (interp_firn,interp_type,fv)
-
-#-- PURPOSE: calculate rotated pole coordinates
-def rotate_coordinates(lon, lat, rot_lon, rot_lat):
-	#-- convert from degrees to radians
-	phi = np.pi*lon/180.0
-	phi_r = np.pi*rot_lon/180.0
-	th = np.pi*lat/180.0
-	th_r = np.pi*rot_lat/180.0
-	#-- calculate rotation parameters
-	R1 = np.sin(phi - phi_r)*np.cos(th)
-	R2 = np.cos(th_r)*np.sin(th) - np.sin(th_r)*np.cos(th)*np.cos(phi - phi_r)
-	R3 = -np.sin(th_r)*np.sin(th) - np.cos(th_r)*np.cos(th)*np.cos(phi - phi_r)
-	#-- rotated pole longitude and latitude of input model
-	#-- convert back into degrees
-	Xr = np.arctan2(R1,R2)*180.0/np.pi
-	Yr = np.arcsin(R3)*180.0/np.pi
-	#-- return the rotated coordinates
-	return (Xr,Yr)
+	return (extrap_firn,extrap_type,fv)
 
 #-- PURPOSE: calculate a regression model for extrapolating values
 def regress_model(t_in, d_in, t_out, ORDER=2, CYCLES=None, RELATIVE=None):
@@ -315,7 +288,7 @@ def regress_model(t_in, d_in, t_out, ORDER=2, CYCLES=None, RELATIVE=None):
 
 #-- PURPOSE: interpolate RACMO firn height to a set of coordinates and times
 #-- wrapper function to extract EPSG and print to terminal
-def racmo_interp_firn_height(base_dir, MODEL, COORDINATES=None,
+def racmo_extrap_firn_height(base_dir, MODEL, COORDINATES=None,
 	DATES=None, CSV=None, FILL_VALUE=None):
 
 	#-- get projection information from model shortname
@@ -340,9 +313,9 @@ def racmo_interp_firn_height(base_dir, MODEL, COORDINATES=None,
 		tdec = np.array(DATES, dtype=np.float)
 
 	#-- read and interpolate/extrapolate RACMO2.3 firn corrections
-	zs,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
+	zs,itype,fv = extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		VARIABLE='zs', FILL_VALUE=FILL_VALUE)
-	air,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
+	air,itype,fv = extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		VARIABLE='FirnAir', FILL_VALUE=FILL_VALUE)
 	interpolate_types = ['invalid','interpolated','backward','forward']
 	for z,a,t in zip(zs,air,itype):
@@ -363,7 +336,7 @@ def usage():
 	print(' --csv=X\t\tRead dates and coordinates from a csv file')
 	print(' --fill-value\tReplace invalid values with fill value\n')
 
-#-- Main program that calls racmo_interp_firn_height()
+#-- Main program that calls racmo_extrap_firn_height()
 def main():
 	#-- Read the system arguments listed after the program
 	long_options = ['help','directory=','smb=','coordinate=','date=','csv=',
@@ -400,7 +373,7 @@ def main():
 			FILL_VALUE = eval(arg)
 
 	#-- run program with parameters
-	racmo_interp_firn_height(base_dir, MODEL, COORDINATES=COORDINATES,
+	racmo_extrap_firn_height(base_dir, MODEL, COORDINATES=COORDINATES,
 		DATES=DATES, CSV=CSV, FILL_VALUE=FILL_VALUE)
 
 #-- run main program

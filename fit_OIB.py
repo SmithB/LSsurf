@@ -7,12 +7,13 @@ Created on Tue Feb 26 17:12:48 2019
 import numpy as np
 import matplotlib.pyplot as plt
 from LSsurf.smooth_xyt_fit import smooth_xyt_fit
-from LSsurf.two_mission_dhdt import read_ICESat2
-from LSsurf.racmo_interp_firn_height import interpolate_racmo_firn
+from LSsurf.read_ICESat2 import read_ICESat2
 from PointDatabase import geo_index, point_data, matlabToYear, mapData
-from LSsurf.interp_MAR_firn import interp_MAR_firn
+from LSsurf.assign_firn_correction import assign_firn_correction
 from LSsurf.reread_data_from_fits import reread_data_from_fits
+from LSsurf.subset_DEM_stack import subset_DEM_stack
 from matplotlib.colors import Normalize
+
 import os
 import h5py
 import sys
@@ -99,12 +100,12 @@ def read_LVIS(xy0, W, gI_file, sensor=4, blockmedian_scale=100):
             D0[ind].blockmedian(blockmedian_scale)
     return D0
 
-def read_data(xy0, W, hemisphere=1, blockmedian_scale=100, DEM_GI_file=None):
+def read_data(xy0, W, hemisphere=1, blockmedian_scale=100, laser_only=False):
     laser_dict=laser_key()
     D = read_ICESat2(xy0, W, GI_files(hemisphere)['ICESat2'],  SRS_proj4=get_SRS_proj4(hemisphere), blockmedian_scale=blockmedian_scale,
                      sensor=laser_dict['ICESat2'])
     try:
-        D_IS = read_ICESat(xy0, W, GI_files(hemisphere)['ICESat1'], sensor=laser_key('ICESat1'))
+        D_IS = read_ICESat(xy0, W, GI_files(hemisphere)['ICESat1'], sensor=laser_key()['ICESat1'])
         if D_IS is not None:
             D += D_IS
     except Exception as e:
@@ -127,30 +128,40 @@ def read_data(xy0, W, hemisphere=1, blockmedian_scale=100, DEM_GI_file=None):
         print(e)
         
     sensor_dict={laser_dict[key]:key for key in ['ICESat1', 'ICESat2', 'ATM','LVIS']}
-    DEM_sensors=[]
-    if DEM_GI_file is not None:
-        D_DEM, sensor_dict, DEM_sensors=read_DEM_data(xy0, W, sensor_dict, hemisphere=hemisphere, blockmedian_scale=blockmedian_scale)
+    if not laser_only:
+        D_DEM, sensor_dict = read_DEM_data(xy0, W, sensor_dict, \
+                                                      GI_file=GI_files(hemisphere)['DEM'], \
+                                                      hemisphere=hemisphere, \
+                                                      blockmedian_scale=blockmedian_scale)
+        D += D_DEM
     return D, sensor_dict
 
-def read_DEM_data(xy0, W, sensor_dict, D=None, DEM_GI_file=None, hemisphere=1, sigma_corr=20., blockmedian_scale=100.):
+def read_DEM_data(xy0, W, sensor_dict, GI_file=None, hemisphere=1, sigma_corr=20., blockmedian_scale=100.):
 
-    D_DEM = geo_index().from_file(DEM_GI_file, read_file=False).query_xy_box(xy0[0]+np.array([-W['x']/2, W['x']/2]), xy0[1]+np.array([-W['y']/2, W['y']/2]), fields=['x','y','z','sigma','time','sensor'])
+    D = geo_index().from_file(GI_file, read_file=False).query_xy_box(xy0[0]+np.array([-W['x']/2, W['x']/2]), xy0[1]+np.array([-W['y']/2, W['y']/2]), fields=['x','y','z','sigma','time','sensor'])
     if len(sensor_dict) > 0:
-        key_num=np.max([key for key in sensor_dict.keys()])+1
+        first_key_num=np.max([key for key in sensor_dict.keys()])+1
     else:
-        key_num=0
-    for Di in D_DEM:
-        sensor_dict[key_num]=os.path.basename(Di.filename)
+        first_key_num=0
+    key_num=0
+    temp_sensor_dict=dict()
+    for Di in D:
+        temp_sensor_dict[key_num]=os.path.basename(Di.filename)
         if blockmedian_scale is not None:
             Di.blockmedian(blockmedian_scale)
         Di.assign({'sensor':np.zeros_like(Di.x)+key_num})
         Di.assign({'sigma_corr':np.zeros_like(Di.x)+sigma_corr})
         key_num += 1
-    if D is not None:
-        D += D_DEM
-    else:
-        D = D_DEM
-    return D, sensor_dict
+    
+    # subset the DEMs so that there is about one per year
+    DEM_number_list=subset_DEM_stack(D, xy0, W['x'], bin_width=400)
+    new_D=[]
+    for count, num in enumerate(DEM_number_list):
+        new_D += [D[num]]
+        new_D[-1].sensor[:]=count+first_key_num
+        sensor_dict[count+first_key_num] = temp_sensor_dict[num]
+   
+    return new_D, sensor_dict
 
 def save_fit_to_file(S,  filename, sensor_dict=None):
     if os.path.isfile(filename):
@@ -251,7 +262,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             return None,None
 
     if reread_dirs is None:       
-        D, sensor_dict=read_data(xy0, W, blockmedian_scale=100., laser_only=laser_only)
+        D, sensor_dict=read_data(xy0, W, blockmedian_scale=100., laser_only=False)
 
         for ind, Di in enumerate(D):
             if Di is None:
@@ -282,20 +293,8 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
     for field in data.list_of_fields:
         setattr(data, field, getattr(data, field).astype(np.float64))
  
-    if reread_dirs is None: 
-        # if we're rereading data, it already has the firn correction applied
-        if firn_correction == 'MAR':
-            if hemisphere==1:
-                data.assign({'h_firn':interp_MAR_firn(data.x, data.y, data.time)})
-                data.z -= data.h_firn
-            elif firn_correction == 'RACMO':
-                if hemisphere==1:
-                    data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y)[0]})
-                    data.z -= data.h_firn
-            elif firn_correction == "RACMO_fac":
-                if hemisphere==1:
-                    data.assign({'fac':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN11', data.time, data.x, data.y)[1]})
-                    data.z -= data.fac
+    if reread_dirs is None and firn_correction is not None:
+        assign_firn_correction(data, firn_correction, hemisphere)
     #report data counts
     vals=[]
     for val, sensor in sensor_dict.items():

@@ -50,12 +50,12 @@ def edit_data_by_subset_fit(N_subset, args):
         sub_args['VERBOSE']=False
         if 'subset_iterations' in args:
             sub_args['max_iterations']=args['subset_iterations']
-        tic=time()
+        #tic=time()
         #if args['VERBOSE']:
         #    print("working on subset %d, XR=[%d, %d], YR=[%d, %d], f_tot=%2.2f" % (count, x0-W_subset['x']/2, x0+W_subset['x']/2, y0-W_subset['x']/2, y0+W_subset['x']/2, np.mean(in_bounds)))
 
         sub_fit=smooth_xyt_fit(**sub_args)
-        t_fit=time()-tic
+        #t_fit=time()-tic
         #if args['VERBOSE']:
         #    print("dt=%3.2f, t expected for all=%3.2f"  % (t_fit, t_fit*subset_ctrs[0].size))
         in_tight_bounds_sub = \
@@ -237,10 +237,13 @@ def smooth_xyt_fit(**kwargs):
     valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
     valid_dz=grids['dz'].validate_pts((args['data'].coords()))
     valid_data=valid_data & valid_dz & valid_z0
+    
+    if not np.any(valid_data):
+        return {'m':m, 'E':E, 'data':None, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # if repeat_res is given, resample the data to include only repeat data (to within a spatial tolerance of repeat_res)
     if args['repeat_res'] is not None:
-        N_before_repeat=np.sum(valid_data)          
+        N_before_repeat=np.sum(valid_data)   
         valid_data[valid_data]=valid_data[valid_data] & \
             select_repeat_data(args['data'].copy().subset(valid_data), grids, args['repeat_dt'], args['repeat_res'], reference_time=grids['t'].ctrs[0][args['reference_epoch']])
         if args['VERBOSE']:

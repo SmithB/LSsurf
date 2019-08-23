@@ -146,16 +146,18 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 	extrap_type = np.zeros_like(tdec,dtype=np.uint8)
 
 	#-- find days that can be interpolated
-	date_indices = np.array((tdec - fd['time'].min())/time_step, dtype='i')
-	if np.any((date_indices >= 0) & (date_indices < nt)):
+	if np.any((tdec >= fd['time'].min()) & (tdec < fd['time'].max())):
 		#-- indices of dates for interpolated days
-		ind, = np.nonzero((date_indices >= 0) & (date_indices < nt))
+		ind,=np.nonzero((tdec >= fd['time'].min()) & (tdec < fd['time'].max()))
+		date_indice=np.array((tdec[ind] - fd['time'].min())/time_step,dtype='i')
 		#-- set interpolation type (1: interpolated in time)
 		extrap_type[ind] = 1
-		#-- Find 2D interpolated surface
-		for k in np.unique(date_indices[ind]):
-			kk, = np.nonzero(date_indices==k)
-			npts = np.count_nonzero(date_indices==k)
+		#-- for each unique firn date
+		#-- linearly interpolate in time between two firn maps
+		#-- then then inverse distance weighting to extrapolate in space
+		for k in np.unique(date_indice):
+			kk, = np.nonzero(date_indice==k)
+			count = np.count_nonzero(date_indice==k)
 			#-- query the search tree to find the N closest points
 			xy2 = np.concatenate((X[kk,None],Y[kk,None]),axis=1)
 			dist,indices = tree.query(xy2, k=N, return_distance=True)
@@ -163,7 +165,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 			#-- in the inverse distance weighting
 			power_inverse_distance = dist**(-POWER)
 			s = np.sum(power_inverse_distance, axis=1)
-			w = power_inverse_distance/np.broadcast_to(s[:,None],(npts,N))
+			w = power_inverse_distance/np.broadcast_to(s[:,None],(count,N))
 			#-- firn height or air content for times before and after tdec
 			firn1 = fd[VARIABLE][k,i,j]
 			firn2 = fd[VARIABLE][k+1,i,j]
@@ -174,11 +176,10 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 				dt*np.sum(w*firn2[indices], axis=1)
 
 	#-- check if needing to extrapolate backwards in time
-	count = np.count_nonzero(date_indices < 0)
+	count = np.count_nonzero(tdec < fd['time'].min())
 	if (count > 0):
 		#-- indices of dates before firn model
-		ind, = np.nonzero(date_indices < 0)
-		npts = np.count_nonzero(date_indices < 0)
+		ind, = np.nonzero(tdec < fd['time'].min())
 		#-- set interpolation type (2: extrapolated backwards in time)
 		extrap_type[ind] = 2
 		#-- query the search tree to find the N closest points
@@ -188,7 +189,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		#-- in the inverse distance weighting
 		power_inverse_distance = dist**(-POWER)
 		s = np.sum(power_inverse_distance, axis=1)
-		w = power_inverse_distance/np.broadcast_to(s[:,None],(npts,N))
+		w = power_inverse_distance/np.broadcast_to(s[:,None],(count,N))
 		#-- calculate a regression model for calculating values
 		#-- read first 10 years of data to create regression model
 		N = 365
@@ -209,11 +210,10 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 				CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[0])
 
 	#-- check if needing to extrapolate forward in time
-	count = np.count_nonzero(date_indices >= nt)
+	count = np.count_nonzero(tdec >= fd['time'].max())
 	if (count > 0):
 		#-- indices of dates after firn model
-		ind, = np.nonzero(date_indices >= nt)
-		npts = np.count_nonzero(date_indices >= nt)
+		ind, = np.nonzero(tdec >= fd['time'].max())
 		#-- set interpolation type (3: extrapolated forward in time)
 		extrap_type[ind] = 3
 		#-- query the search tree to find the N closest points
@@ -223,7 +223,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		#-- in the inverse distance weighting
 		power_inverse_distance = dist**(-POWER)
 		s = np.sum(power_inverse_distance, axis=1)
-		w = power_inverse_distance/np.broadcast_to(s[:,None],(npts,N))
+		w = power_inverse_distance/np.broadcast_to(s[:,None],(count,N))
 		#-- calculate a regression model for calculating values
 		#-- read last 10 years of data to create regression model
 		N = 365

@@ -171,10 +171,10 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 	interp_mask = np.zeros_like(tdec,dtype=np.bool)
 
 	#-- find days that can be interpolated
-	date_indices = np.array((tdec - fd['time'].min())/time_step, dtype='i')
-	if np.any((date_indices >= 0) & (date_indices < nt) & valid):
+	if np.any((tdec >= fd['time'].min()) & (tdec <= fd['time'].max()) & valid):
 		#-- indices of dates for interpolated days
-		ind, = np.nonzero((date_indices >= 0) & (date_indices < nt) & valid)
+		ind, = np.nonzero((tdec >= fd['time'].min()) &
+			(tdec <= fd['time'].max()) & valid)
 		#-- create an interpolator for firn height or air content
 		RGI = scipy.interpolate.RegularGridInterpolator(
 			(fd['time'],fd['y'],fd['x']), fd[VARIABLE])
@@ -189,10 +189,10 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		interp_type[ind] = 1
 
 	#-- check if needing to extrapolate backwards in time
-	count = np.count_nonzero((date_indices < 0) & valid)
+	count = np.count_nonzero((tdec < fd['time'].min()) & valid)
 	if (count > 0):
 		#-- indices of dates before firn model
-		ind, = np.nonzero((date_indices < 0) & valid)
+		ind, = np.nonzero((tdec < fd['time'].min()) & valid)
 		#-- set interpolation type (2: extrapolated backwards)
 		interp_type[ind] = 2
 		#-- calculate a regression model for calculating values
@@ -221,10 +221,10 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 				CYCLES=[0.25,0.5,1.0,2.0,4.0,5.0], RELATIVE=T[0])
 
 	#-- check if needing to extrapolate forward in time
-	count = np.count_nonzero((date_indices >= nt) & valid)
+	count = np.count_nonzero((tdec > fd['time'].max()) & valid)
 	if (count > 0):
 		#-- indices of dates after firn model
-		ind, = np.nonzero((date_indices >= nt) & valid)
+		ind, = np.nonzero((tdec > fd['time'].max()) & valid)
 		#-- set interpolation type (3: extrapolated forward)
 		interp_type[ind] = 3
 		#-- calculate a regression model for calculating values

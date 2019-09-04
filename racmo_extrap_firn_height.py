@@ -14,7 +14,6 @@ CALLING SEQUENCE:
 		--coordinate=[-39e4,-133e4],[-39e4,-133e4] --date=2016.1,2018.1
 
 COMMAND LINE OPTIONS:
-	-Y X, --year=X: end years to use in reduction separated by commas
 	-D X, --directory=X: Working data directory
 	-S X, --smb=X: Firn model outputs to interpolate
 		FGRN055: 1km interpolated Greenland RACMO2.3p2

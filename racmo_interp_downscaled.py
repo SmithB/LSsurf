@@ -200,7 +200,7 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 			T[k] = d['TIME'][kk]
 			#-- spatially interpolate variable
 			spl = scipy.interpolate.RectBivariateSpline(d['x'], d['y'],
-				d[VARIABLE][kk,:,:].T, kx=1, ky=1)
+				d[VARNAME][kk,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
 			VAR[:,k] = spl.ev(ix[ind],iy[ind])
 

@@ -188,6 +188,80 @@ def parse_biases(m, bias_model, bias_params):
             slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
     return b_dict, slope_bias_dict
 
+def parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_dzbar, bias_model, bias_params, dzdt_lags=None, timing={}):
+    tic=time()
+    # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
+    z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
+    z=z.ravel()
+    R=R.tocsr()
+    R.sort_indices()
+    R.eliminate_zeros()
+    timing['decompose_qz']=time()-tic
+
+    E0=np.zeros(R.shape[0])
+
+    # compute Rinv for use in propagating errors.
+    # what should the tolerance be?  We will eventually square Rinv and take its
+    # row-wise sum.  We care about errors at the cm level, so
+    # size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
+    tic=time(); RR, CC, VV, status=inv_tr_upper(R, np.int(np.prod(R.shape)/4), 1.e-5);
+    # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
+    Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
+    tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
+    
+    # generate the full E vector.  E0 appears to be an ndarray,
+    E0=np.array(Ip_c.dot(E0)).ravel()
+    E['z0']=np.reshape(E0[Gc.TOC['cols']['z0']], grids['z0'].shape)
+    E['dz']=np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)
+
+    # generate the lagged dz errors:
+
+    for lag in dzdt_lags:
+        this_name='dzdt_lag%d' % lag
+        E[this_name]=lin_op(grids['dz'], name=this_name, col_N=G_data.col_N).dzdt(lag=lag).grid_error(Ip_c.dot(Rinv))
+        # note: this should probably be dotted with the G_dzbar op.  lag op is nlag*nt, G_dzbar is nt*ncols, R is NcolsxNcols RUN ONE LINE AT A TIME
+        this_name='dzdt_bar_lag%d' % lag
+        this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR().dot(G_dzbar)
+        E[this_name]=np.sqrt((this_op.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
+         
+    # generate the grid-mean error for zero lag  
+    E['dz_bar']=np.sqrt((G_dzbar.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
+    
+    E['bias'], E['slope_bias']=parse_biases(E0, bias_model, bias_params)
+
+def parse_model(m, m0, G_data, G_dzbar, TOC, grids, bias_params, bias_model, dzdt_lags=None):
+
+    # reshape the components of m to the grid shapes
+    m['z0']=np.reshape(m0[TOC['cols']['z0']], grids['z0'].shape)
+    m['dz']=np.reshape(m0[TOC['cols']['dz']], grids['dz'].shape)
+    
+    # calculate height rates
+    for lag in dzdt_lags:
+        this_name='dzdt_lag%d' % lag
+        m[this_name]=lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt(lag=lag).grid_prod(m0)
+    
+    # calculate the grid mean of dz
+    m['dz_bar']=G_dzbar.dot(m0)
+
+    # build a matrix that takes the lagged temporal derivative of dzbar (e.g. quarterly dzdt, annual dzdt)
+    for lag in dzdt_lags:
+        this_name='dzdt_bar_lag%d' % lag
+        this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR()
+        # calculate the grid mean of dz/dt
+        m[this_name]=this_op.dot(m['dz_bar'].ravel())
+
+    # report the parameter biases.  Sorted in order of the parameter bias arguments
+    m['bias'], m['slope_bias']=parse_biases(m0, bias_model, bias_params)
+
+    # report the entire model vector, just in case we want it.
+    m['all']=m0
+
+    # report the geolocation of the output map
+    m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
+
+
+
+
 def smooth_xyt_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
     args={'reference_epoch':0,
@@ -220,8 +294,10 @@ def smooth_xyt_fit(**kwargs):
         timing['edit_by_subset']=time()-tic
         if args['Edit_only']:
             return {'timing':timing, 'data':args['data'].copy().subset(valid_data)}
-    m=dict()
-    E=dict()
+    m={}
+    E={}
+    R={}
+    RMS={}
 
     # define the grids
     tic=time()
@@ -320,9 +396,16 @@ def smooth_xyt_fit(**kwargs):
     # put the fit and constraint matrices together
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
+     
+    # build a matrix that takes the average of the center of the delta-z grid
+    # this gets used both in the averaging and error-calculation codes
+    XR=np.mean(grids['z0'].bds[0])+np.array([-1., 1.])*args['W_ctr']/2.
+    YR=np.mean(grids['z0'].bds[1])+np.array([-1., 1.])*args['W_ctr']/2.
+    center_dzbar=lin_op(grids['dz'], name='center_dzbar', col_N=G_data.col_N).vstack([lin_op(grids['dz']).mean_of_bounds((XR, YR, [season, season] )) for season in grids['dz'].ctrs[2]])
+    G_dzbar=center_dzbar.toCSR()
 
     # define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution:
-    # Find the identify the rows and columns that match the reference epoch
+    # Find the rows and columns that match the reference epoch
     temp_r, temp_c=np.meshgrid(np.arange(0, grids['dz'].shape[0]), np.arange(0, grids['dz'].shape[1]))
     z02_mask=grids['dz'].global_ind([temp_r.transpose().ravel(), temp_c.transpose().ravel(),\
                   args['reference_epoch']+np.zeros_like(temp_r).ravel()])
@@ -340,12 +423,10 @@ def smooth_xyt_fit(**kwargs):
     Gcoo=Gcoo.dot(Ip_c)
     timing['setup']=time()-tic
 
-    #if np.any(data.z>2500):
-    #    print('outlier!')
     # initialize the book-keeping matrices for the inversion
     m0=np.zeros(Ip_c.shape[0])
     if "three_sigma_edit" in data.list_of_fields:
-        inTSE=np.where(data.three_sigma_edit)[0]
+        inTSE=np.flatnonzero(data.three_sigma_edit)
     else:
         inTSE=np.arange(G_data.N_eq, dtype=int)
     inTSE_last = np.zeros([0])
@@ -392,123 +473,40 @@ def smooth_xyt_fit(**kwargs):
                 if args['VERBOSE']:
                     print("sigma_hat LT 1, exiting after iteration %d" % iteration)
                 break             
-         
-    timing['iteration']=time()-tic_iteration
-    inTSE=inTSE_last
-    valid_data[valid_data]=(np.abs(rs_data)<3.0*np.maximum(1, sigma_hat))
-    data.assign({'three_sigma_edit':np.abs(rs_data)<3.0*np.maximum(1, sigma_hat)})
-    # report the model-based estimate of the data points
-    data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
 
+    # if we've done any iterations, parse the model and the data residuals
+    if args['max_iterations'] > 0:
+        timing['iteration']=time()-tic_iteration
+        inTSE=inTSE_last
+        valid_data[valid_data]=(np.abs(rs_data)<3.0*np.maximum(1, sigma_hat))
+        data.assign({'three_sigma_edit':np.abs(rs_data)<3.0*np.maximum(1, sigma_hat)})
+        # report the model-based estimate of the data points
+        data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
+        parse_model(m, m0, G_data, G_dzbar, Gc.TOC, grids, args['bias_params'], bias_model, dzdt_lags=args['dzdt_lags'])
+       # parse the resduals to assess the contributions of the total error:
+        # Make the C matrix for the constraints
+        TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
+        rc=TCinv_cov.dot(Gc.toCSR().dot(m0))
+        ru=Gc.toCSR().dot(m0)
+        for eq_type in ['d2z_dt2','grad2_z0','grad2_dzdt']:
+            if eq_type in Gc.TOC['rows']:
+                R[eq_type]=np.sum(rc[Gc.TOC['rows'][eq_type]]**2)
+                RMS[eq_type]=np.sqrt(np.mean(ru[Gc.TOC['rows'][eq_type]]**2))
+    R['data']=np.sum((((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])/data.sigma[data.three_sigma_edit==1])**2))
+    RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
 
-    # reshape the components of m to the grid shapes
-    m['z0']=np.reshape(m0[Gc.TOC['cols']['z0']], grids['z0'].shape)
-    m['dz']=np.reshape(m0[Gc.TOC['cols']['dz']], grids['dz'].shape)
-
-    # calculate height rates
-    for lag in args['dzdt_lags']:
-        this_name='dzdt_lag%d' % lag
-        m[this_name]=lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt(lag=lag).grid_prod(m0)
-
-    # build a matrix that takes the average of the central 20 km of the delta-z grid
-    XR=np.mean(grids['z0'].bds[0])+np.array([-1., 1.])*args['W_ctr']/2.
-    YR=np.mean(grids['z0'].bds[1])+np.array([-1., 1.])*args['W_ctr']/2.
-    center_dzbar=lin_op(grids['dz'], name='center_dzbar', col_N=G_data.col_N).vstack([lin_op(grids['dz']).mean_of_bounds((XR, YR, [season, season] )) for season in grids['dz'].ctrs[2]])
-    G_dzbar=center_dzbar.toCSR()
-    # calculate the grid mean of dz
-    m['dz_bar']=G_dzbar.dot(m0)
-
-    # build a matrix that takes the lagged temporal derivative of dzbar (e.g. quarterly dzdt, annual dzdt)
-    for lag in args['dzdt_lags']:
-        this_name='dzdt_bar_lag%d' % lag
-        this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR()
-        # calculate the grid mean of dz/dt
-        m[this_name]=this_op.dot(m['dz_bar'].ravel())
-
-    # report the parameter biases.  Sorted in order of the parameter bias arguments
-    if args['bias_params'] is not None:
-        m['bias'], m['slope_bias']=parse_biases(m0, bias_model, args['bias_params'])
-
-    # report the entire model vector, just in case we want it.
-    m['all']=m0
-
-    # report the geolocation of the output map
-    m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
-
-    # parse the resduals to assess the contributions of the total error:
-    # Make the C matrix for the constraints
-    TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
-    rc=TCinv_cov.dot(Gc.toCSR().dot(m0))
-    ru=Gc.toCSR().dot(m0)
-    R=dict()
-    RMS=dict()
-    for eq_type in ['d2z_dt2','grad2_z0','grad2_dzdt']:
-        if eq_type in Gc.TOC['rows']:
-            R[eq_type]=np.sum(rc[Gc.TOC['rows'][eq_type]]**2)
-            RMS[eq_type]=np.sqrt(np.mean(ru[Gc.TOC['rows'][eq_type]]**2))
-    R['data']=np.sum(((data.z_est-data.z)/data.sigma)**2)
-    RMS['data']=np.sqrt(np.mean((data.z_est-data.z)**2))
-
-    # if we need to compute the errors in the solution, continue
+    # Compute the error in the solution if requested
     if args['compute_E']:
-        tic=time()
-        # take the QZ transform of Gcoo
-        z, R, perm, rank=sparseqr.qz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
-        z=z.ravel()
-        R=R.tocsr()
-        R.sort_indices()
-        R.eliminate_zeros()
-        timing['decompose_qz']=time()-tic
+        # We have generally not done any iterations at this point, so need to make the Ip_r matrix
+        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+inTSE.size), (np.arange(Gc.N_eq+inTSE.size), np.concatenate((inTSE, cov_rows)))), \
+                           shape=(Gc.N_eq+inTSE.size, Gcoo.shape[0])).tocsc()
+        parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_dzbar, \
+                         bias_model, args['bias_params'], dzdt_lags=args['dzdt_lags'], timing=timing)
 
-        E0=np.zeros(R.shape[0])
-
-        # compute Rinv for use in propagating errors.
-        # what should the tolerance be?  We will eventually square Rinv and take its
-        # row-wise sum.  We care about errors at the cm level, so
-        # size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
-        tic=time(); RR, CC, VV, status=inv_tr_upper(R, np.int(np.prod(R.shape)/4), 1.e-5);
-        # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
-        Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
-        tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
-
-        # generate the full E vector.  E0 appears to be an ndarray,
-        E0=np.array(Ip_c.dot(E0)).ravel()
-        E['z0']=np.reshape(E0[Gc.TOC['cols']['z0']], grids['z0'].shape)
-        E['dz']=np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)
-
-        # generate the lagged dz errors:
-
-        for lag in args['dzdt_lags']:
-            this_name='dzdt_lag%d' % lag
-            E[this_name]=lin_op(grids['dz'], name=this_name, col_N=G_data.col_N).dzdt(lag=lag).grid_error(Ip_c.dot(Rinv))
-
-            this_name='dzdt_bar_lag%d' % lag
-            this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR()
-            E[this_name]=np.sqrt((this_op.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-        # calculate the grid mean of dz/dt
-
-        # generate the season-to-season errors
-        #E['dzdt_qyr']=lin_op(grids['dz'], name='dzdt_1yr', col_N=G_data.col_N).dzdt().grid_error(Ip_c.dot(Rinv))
-
-        # generate the annual errors
-        #E['dzdt_1yr']=lin_op(grids['dz'], name='dzdt_1yr', col_N=G_data.col_N).dzdt(lag=4).grid_error(Ip_c.dot(Rinv))
-
-        # generate the grid-mean error
-        E['dz_bar']=np.sqrt((G_dzbar.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-
-        # generate the grid-mean quarterly dzdt error
-        #E['dzdt_bar_qyr']=np.sqrt((ddt_qyr.dot(G_dzbar).dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-
-        # generate the grid-mean annual dzdt error
-        #E['dzdt_bar_1yr']=np.sqrt((ddt_1yr.dot(G_dzbar).dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-
-        # report the rgt bias errors.  Sorted by RGT, then by  cycle
-        if args['bias_params'] is not None:
-            E['bias']=parse_biases(E0, bias_model['bias_ID_dict'], args['bias_params'])
-
+ 
 
     TOC=Gc.TOC
-    return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing,'E_RMS':args['E_RMS']}
+    return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing,'E_RMS':args['E_RMS'], 'dzdt_lags':args['dzdt_lags']}
 
 
 

@@ -1,0 +1,12 @@
+#! /bin/env bash
+cython_opts="-X language_level=3"
+python=python3.6
+
+cython3 $cython_opts spsolve_tr_upper.pyx ;
+gcc -O3 -fPIC -shared -pthread -fwrapv -fno-strict-aliasing -I/usr/include/$python -o spsolve_tr_upper.so spsolve_tr_upper.c
+
+cython3 $cython_opts propagate_qz_errors.pyx ;
+gcc -O3 -fPIC -shared -pthread -fwrapv -fno-strict-aliasing -I/usr/include/$python -o propagate_qz_errors.so propagate_qz_errors.c
+
+cython3 $cython_opts inv_tr_upper.pyx ;
+gcc -O3 -fPIC -shared -pthread -fwrapv -fno-strict-aliasing -I/usr/include/$python -o inv_tr_upper.so inv_tr_upper.c

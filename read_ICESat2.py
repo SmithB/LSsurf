@@ -12,9 +12,9 @@ from PointDatabase.point_data import point_data
 from PointDatabase.ATL06_filters import segDifferenceFilter
 from PointDatabase.ATL06_tiles import reconstruct_tracks
  
-def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2, blockmedian_scale=None):
+def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2, blockmedian_scale=None, cplx_accept_threshold=0.):
     field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'], 
-                'fit_statistics':['dh_fit_dx'],
+                'fit_statistics':['dh_fit_dx', 'n_fit_photons','w_surface_window_final','snr_significance'],
                 'ground_track':['x_atc'],
                 'geophysical' : ['dac'],
                 'orbit_info':['rgt','cycle_number'],
@@ -42,13 +42,30 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         if delete_file==0:
             D1.append(D)
 
+    # D1 is now a filtered version of D0
+    D_pt=point_data().from_list(D1)
+    bin_xy=1.e4*np.round((D_pt.x+1j*D_pt.y)/1.e4)
+    cplx_bins=[]
+    for xy0 in np.unique(bin_xy):
+        ii=np.flatnonzero(bin_xy==xy0)
+        if np.mean(D_pt.atl06_quality_summary[ii]==0) < cplx_accept_threshold:
+            cplx_bins+=[xy0]
+    cplx_bins=np.array(cplx_bins)
+
     for ind, D in enumerate(D1):
-        try:
-            segDifferenceFilter(D, setValid=False, toNaN=True, tol=seg_diff_tol)
-        except TypeError as e:
-            print("HERE")          
-            print(e)
-        D.h_li[D.atl06_quality_summary==1]=np.NaN
+        
+        valid=segDifferenceFilter(D, setValid=False, toNaN=False, tol=seg_diff_tol)
+        
+        D.assign({'quality':D.atl06_quality_summary})
+        
+        cplx_data=np.in1d(1.e4*np.round((D.x+1j*D.y)/1.e4), cplx_bins)
+        if np.any(cplx_data):
+            D.quality[cplx_data] = (D.snr_significance[cplx_data] > 0.02) | \
+                (D.n_fit_photons[cplx_data]/D.w_surface_window_final[cplx_data] < 5)
+            valid[cplx_data] |= segDifferenceFilter(D, setValid=False, toNaN=False, tol=2*seg_diff_tol)[cplx_data]
+        
+        D.h_li[valid==0] = np.NaN
+        D.h_li[D.quality==1] = np.NaN
         if blockmedian_scale is not None:
             D.blockmedian(blockmedian_scale, field='h_li')
               
@@ -64,3 +81,18 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
         D1[ind]=D.subset(np.isfinite(D.h_li), datasets=['x','y','z','time','delta_time','year','sigma','sigma_corr','rgt','cycle','sensor', 'BP','LR'])
     return D1
+
+def main():
+    gI_file='/Volumes/insar10/ben/IS2_tiles/GL/GeoIndex.h5'
+    xy0=[-170000.0, -2280000.0]
+    dI=point_data().from_list(read_ICESat2(xy0, {'x':2.e4, 'y':2.e4}, gI_file, cplx_accept_threshold=0.25))
+    import matplotlib.pyplot as plt
+    #plt.plot(dI.x, dI.y,'ro')
+    #dI=dI=point_data().from_list(read_ICESat2(xy0, {'x':2.e4, 'y':2.e4}, gI_file, cplx_accept_threshold=0))
+    #plt.plot(dI.x, dI.y,'kx')
+    #plt.axis('equal')
+    plt.scatter(dI.x, dI.y, c=dI.z, linewidth=0); plt.colorbar()
+    
+    
+if __name__=='__main__':
+    main()

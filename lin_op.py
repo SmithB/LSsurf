@@ -233,13 +233,13 @@ class lin_op:
     def grid_prod(self, m):
         # dot the operator with a vector, map the result to the operator's grid
         P=np.zeros(self.col_N)+np.NaN
-        P[self.ind0]=self.toCSR().dot(m)
+        P[self.ind0]=self.toCSR().dot(m).ravel()
         return P[self.grid.col_0:self.grid.col_N].reshape(self.grid.shape)
 
     def grid_error(self, Rinv):
         # calculate the error estimate for an operator and map the result to the operator's grid
         E=np.zeros(self.col_N)+np.NaN
-        E[self.ind0]=np.sqrt((self.toCSR().dot(Rinv)).power(2).sum(axis=1))
+        E[self.ind0]=np.sqrt((self.toCSR().dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[self.grid.col_0:self.grid.col_N].reshape(self.grid.shape)
 
     def vstack(self, ops, order=None, name=None, TOC_cols=None):

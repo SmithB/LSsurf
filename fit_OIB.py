@@ -440,7 +440,6 @@ def main(argv):
         re_match=re.compile('E(.*)_N(.*).h5').search(args.calc_error_file)
         args.xy0=[float(re_match.group(ii))*1000 for ii in [1, 2]]
 
-
     if not os.path.isdir(dest_dir):
         os.mkdir(dest_dir)
 

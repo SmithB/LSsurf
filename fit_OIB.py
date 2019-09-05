@@ -12,12 +12,12 @@ from PointDatabase import geo_index, point_data, matlabToYear, mapData
 from LSsurf.assign_firn_correction import assign_firn_correction
 from LSsurf.reread_data_from_fits import reread_data_from_fits
 from LSsurf.subset_DEM_stack import subset_DEM_stack
-from matplotlib.colors import Normalize
 
 import os
 import h5py
 import sys
 import glob
+import re
 
 def get_SRS_proj4(hemisphere):
     if hemisphere==1:
@@ -34,8 +34,9 @@ def GI_files(hemisphere):
                   'LVIS':'/Volumes/insar10/ben/OIB_database/LVIS/GL/geo_index.h5',
                   'ICESat1':'/Volumes/insar10/ben/OIB_database/glas/GL/rel_634/GeoIndex.h5',
                   'ICESat2':'/Volumes/ice2/ben/scf/GL_06/tiles/001/GeoIndex.h5',
-                  'DEM':'/Volumes/insar7/ben/ArcticDEM/geocell_v3/GeoIndex.h5' };
-        return GI_files
+                  'DEM':'/Volumes/insar7/ben/ArcticDEM/geocell_v3/GeoIndex_plus_rough.h5' };
+        GI_files['ICESat2']='/Volumes/insar10/ben/IS2_tiles/GL/GeoIndex.h5'
+    return GI_files
 
 def read_ICESat(xy0, W, gI_file, sensor=1):
     fields=[ 'IceSVar', 'deltaEllip', 'numPk', 'ocElv', 'reflctUC', 'satElevCorr',  'time',  'x', 'y', 'z']
@@ -100,40 +101,47 @@ def read_LVIS(xy0, W, gI_file, sensor=4, blockmedian_scale=100):
             D0[ind].blockmedian(blockmedian_scale)
     return D0
 
-def read_data(xy0, W, hemisphere=1, blockmedian_scale=100, laser_only=False):
+def read_data(xy0, W, hemisphere=1, blockmedian_scale=100, laser_only=False, \
+              mask_file=None, geoid_file=None):
     laser_dict=laser_key()
-    D = read_ICESat2(xy0, W, GI_files(hemisphere)['ICESat2'],  SRS_proj4=get_SRS_proj4(hemisphere), blockmedian_scale=blockmedian_scale,
-                     sensor=laser_dict['ICESat2'])
-    try:
-        D_IS = read_ICESat(xy0, W, GI_files(hemisphere)['ICESat1'], sensor=laser_key()['ICESat1'])
-        if D_IS is not None:
-            D += D_IS
-    except Exception as e:
-        print("problem with ICESat-1")
-        print(e)
-    #try:
-    if True:
-        D_LVIS=read_LVIS(xy0, W, GI_files(hemisphere)['LVIS'], blockmedian_scale=100., sensor=laser_dict['LVIS'])
-        if D_LVIS is not None:
-            D += D_LVIS
-    #except Exception as e:
-    #    print("Problem with LIVS:" )
-    #    print(e)
-    try:
-        D_ATM = read_ATM(xy0, W, GI_files(hemisphere)['ATM'], blockmedian_scale=100., sensor=laser_dict['ATM'])
-        if D_ATM is not None:
-            D += D_ATM
-    except Exception as e:
-        print("Problem with ATM")
-        print(e)
-        
     sensor_dict={laser_dict[key]:key for key in ['ICESat1', 'ICESat2', 'ATM','LVIS']}
+    D = read_ICESat2(xy0, W, GI_files(hemisphere)['ICESat2'],  SRS_proj4=get_SRS_proj4(hemisphere),
+                     sensor=laser_dict['ICESat2'], cplx_accept_threshold=0.25)
+    D_IS = read_ICESat(xy0, W, GI_files(hemisphere)['ICESat1'], sensor=laser_key()['ICESat1'])
+    if D_IS is not None:
+        D += D_IS
+
+    D_LVIS=read_LVIS(xy0, W, GI_files(hemisphere)['LVIS'], blockmedian_scale=100., sensor=laser_dict['LVIS'])
+    if D_LVIS is not None:
+        D += D_LVIS
+
+    D_ATM = read_ATM(xy0, W, GI_files(hemisphere)['ATM'], blockmedian_scale=100., sensor=laser_dict['ATM'])
+    if D_ATM is not None:
+        D += D_ATM
+         
     if not laser_only:
+        # add the DEM data unless we've decided explicitly to exclude it.
         D_DEM, sensor_dict = read_DEM_data(xy0, W, sensor_dict, \
-                                                      GI_file=GI_files(hemisphere)['DEM'], \
-                                                      hemisphere=hemisphere, \
-                                                      blockmedian_scale=blockmedian_scale)
+                                GI_file=GI_files(hemisphere)['DEM'], \
+                                hemisphere=hemisphere, blockmedian_scale=blockmedian_scale)
         D += D_DEM
+        
+    # two masking steps: 
+    # delete data over rock and ocean 
+    if mask_file is not None:
+        mask=mapData().from_geotif(mask_file, bounds=[xy0[0]+np.array([-1, 1])*W['x']*1.1, xy0[1]+np.array([-1, 1])*W['y']*1.1])
+        for Di in D: 
+            if Di is not None:
+                Di.index(mask.interp(Di.x, Di.y) > 0.1)
+            
+    # if we have a geoid, delete data that are less than 10 m above it
+    if geoid_file is not None:
+        mask=mapData().from_geotif(mask_file, bounds=[xy0[0]+np.array([-1, 1])*W['x']*1.1, xy0[1]+np.array([-1, 1])*W['y']*1.1])
+        for Di in D: 
+            if Di is not None:
+                Di.assign({'geoid':mask.interp(Di.x, Di.y)})
+                Di.index((Di.z-Di.geoid) > 10)
+
     return D, sensor_dict
 
 def read_DEM_data(xy0, W, sensor_dict, GI_file=None, hemisphere=1, sigma_corr=20., blockmedian_scale=100.):
@@ -163,7 +171,7 @@ def read_DEM_data(xy0, W, sensor_dict, GI_file=None, hemisphere=1, sigma_corr=20
    
     return new_D, sensor_dict
 
-def save_fit_to_file(S,  filename, sensor_dict=None):
+def save_fit_to_file(S,  filename, sensor_dict=None, dzdt_lags=None):
     if os.path.isfile(filename):
         os.remove(filename)
     with h5py.File(filename,'w') as h5f:
@@ -189,6 +197,14 @@ def save_fit_to_file(S,  filename, sensor_dict=None):
         for ii, name in enumerate(['y','x']):
             h5f.create_dataset('/z0/'+name, data=S['grids']['z0'].ctrs[ii])
         h5f.create_dataset('/z0/z0', data=S['m']['z0'])
+        for lag in dzdt_lags:
+            this_name='dzdt_lag%d' % lag
+            h5f.create_dataset('/dz/'+this_name, data=S['m'][this_name])
+        h5f.create_group('/dz/center_average')
+        h5f.create_dataset('/dz/center_average/dz', data=S['m']['dz_bar'])
+        for lag in dzdt_lags:
+            this_name='dzdt_bar_lag%d' % lag
+            h5f.create_dataset('/dz/center_average/'+this_name, data=S['m'][this_name])
         h5f.create_group('/RMS')
         for key in S['RMS']:
             h5f.create_dataset('/RMS/'+key, data=S['RMS'][key])
@@ -206,7 +222,28 @@ def save_fit_to_file(S,  filename, sensor_dict=None):
             h5f.create_dataset('/slope_bias/y_slope', data=np.array(y_slope))
     return
 
-def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=np.Inf ):
+def save_errors_to_file( S, filename, sensor_dict=None):
+    with h5py.File(filename,'r+') as h5f:
+        h5f.create_group('/dz/sigma/')
+        for ii, name in enumerate(['y','x','t']):
+            h5f.create_dataset('/dz/sigma/'+name, data=S['grids']['dz'].ctrs[ii])
+        h5f.create_dataset('/dz/sigma/dz', data=S['E']['dz'])
+        h5f.create_group('/z0/sigma')
+        for ii, name in enumerate(['y','x']):
+            h5f.create_dataset('/z0/sigma/'+name, data=S['grids']['z0'].ctrs[ii])
+        h5f.create_dataset('/z0/sigma/z0', data=S['E']['z0'])
+        for key in S['E']['bias']:
+            h5f.create_dataset('/bias/sigma/'+key, data=S['E']['bias'][key])
+        if 'slope_bias' in S['E']:
+            sensors=np.array(list(S['E']['slope_bias'].keys()))
+            h5f.create_dataset('/slope_bias/sigma/sensors', data=sensors)
+            x_slope=[S['E']['slope_bias'][key]['slope_x'] for key in sensors]
+            y_slope=[S['E']['slope_bias'][key]['slope_y'] for key in sensors]
+            h5f.create_dataset('/slope_bias/sigma/x_slope', data=np.array(x_slope))
+            h5f.create_dataset('/slope_bias//sigma/y_slope', data=np.array(y_slope))
+    return
+
+def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=4.e4 ):
     files=[]
     if file is not None:
         files += [file]
@@ -233,21 +270,36 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=n
         except KeyError as e:
             print("Error for file "+file)
             print(e)
-
     plt.axis('tight');
     plt.axis('equal');
     plt.show()
     return h, zero_files
 
+def dump_geotifs(glob_str=None, fields=['dz','z0'], tif_list=None, out_dir='.', W=4.e4):
+    if not os.path.isdir(out_dir):
+        os.mkdir(out_dir)
+    files=glob.glob(glob_str)
+    for file in files:
+        for field in fields:
+            D=mapData().from_h5(file, group='/'+field+'/', field_mapping={'z':field})
+            w01=np.array([-0.5, 0.5])*W
+            D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
+            D.to_geotif(out_dir+'/'+field+'_'+os.path.basename(file))
+    
 
-def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  hemisphere=1, reference_epoch=None, reread_dirs=None, N_subset=8, Edit_only=False, sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, laser_only=False, firn_correction=False):
+def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  \
+            hemisphere=1, reference_epoch=None, reread_dirs=None, max_iterations=5, N_subset=8, Edit_only=False, \
+            sensor_dict={}, out_name=None, replace=False, DOPLOT=False, spring_only=False, \
+            laser_only=False, firn_correction=False, geoid_file=None, mask_file=None, \
+            calc_error_file=None, repeat_res=250):
     """
         Wrapper for smooth_xyt_fit that can find data and set the appropriate parameters
     """
     print("fit_OIB: working on %s" % out_name)
 
     SRS_proj4=get_SRS_proj4(hemisphere)
-
+    compute_E=False
+    # set defaults for E_RMS, then update with input parameters
     E_RMS0={'d2z0_dx2':200000./3000/3000, 'd3z_dx2dt':3000./3000/3000, 'd2z_dxdt':3000/3000, 'd2z_dt2':5000}
     E_RMS0.update(E_RMS)
 
@@ -258,11 +310,19 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             out_name=out_name %(xy0[0]/1000, xy0[1]/1000)
         except:
             pass
-        if replace is False and os.path.isfile(out_name):
-            return None,None
-
-    if reread_dirs is None:       
-        D, sensor_dict=read_data(xy0, W, blockmedian_scale=100., laser_only=False)
+    
+    if calc_error_file is not None:
+        # get xy0 from the filename
+        re_match=re.compile('E(.*)_N(.*).h5').search(calc_error_file)
+        xy0=[float(re_match.group(ii))*1000 for ii in [1, 2]]
+        data, sensor_dict=reread_data_from_fits(xy0, Wxy, [os.path.dirname(calc_error_file)])
+        compute_E=True
+        max_iterations=0
+        N_subset=None
+        repeat_res=None
+    elif reread_dirs is None:       
+        D, sensor_dict=read_data(xy0, W, blockmedian_scale=100., laser_only=False, \
+                                 mask_file=mask_file, geoid_file=geoid_file)
 
         for ind, Di in enumerate(D):
             if Di is None:
@@ -293,7 +353,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
     for field in data.list_of_fields:
         setattr(data, field, getattr(data, field).astype(np.float64))
  
-    if reread_dirs is None and firn_correction is not None:
+    if reread_dirs is None and calc_error_file is None and firn_correction is not None:
         assign_firn_correction(data, firn_correction, hemisphere)
     #report data counts
     vals=[]
@@ -305,24 +365,19 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
 
     # run the fit
     S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
-                     reference_epoch=reference_epoch, N_subset=N_subset, compute_E=False,
-                     bias_params=['day','sensor'], repeat_res=250, max_iterations=4, srs_WKT=SRS_proj4,
-                     VERBOSE=True, Edit_only=Edit_only, data_slope_sensors=DEM_sensors)
+                     reference_epoch=reference_epoch, N_subset=N_subset, compute_E=compute_E,
+                     bias_params=['day','sensor'], repeat_res=repeat_res, max_iterations=max_iterations, 
+                     srs_WKT=SRS_proj4, VERBOSE=True, Edit_only=Edit_only, data_slope_sensors=DEM_sensors, 
+                     mask_scale={0:10, 1:1})
     if Edit_only:
         print('N_subsets=%d, t=%f' % ( N_subset, S['timing']['edit_by_subset']))
 
     if out_name is not None:
-        save_fit_to_file(S, out_name, sensor_dict)
-    if DOPLOT:
-        plt.figure(); plt.clf()
-        plt.imshow(np.gradient(S['m']['z0'], S['grids']['z0'].delta[0])[1], extent=S['m']['extent'], cmap=plt.cm.gray, origin='lower');
-        cmap=plt.cm.RdYlBu
-        alpha=0.5
-        dzImage=(S['m']['dz'][:,:,-1]-S['m']['dz'][:,:,0])/(S['grids']['dz'].ctrs[2][-1]-S['grids']['dz'].ctrs[2][0])
-        dzIm4=cmap(Normalize(-15, 15, clip=True)(dzImage))
-        dzIm4[...,-1]=alpha
-        plt.imshow( dzIm4, extent=S['m']['extent'],  origin='lower');
-        plt.title(out_name)
+        if calc_error_file is None:
+            save_fit_to_file(S, out_name, sensor_dict, dzdt_lags=S['dzdt_lags'])
+        else:
+            save_errors_to_file(S, out_name, sensor_dict)
+
     return S, data, sensor_dict
 
 def main(argv):
@@ -340,7 +395,6 @@ def main(argv):
     parser.add_argument('--Hemisphere','-H', type=int, default=1, help='hemisphere: -1=Antarctica, 1=Greenland')
     parser.add_argument('--base_directory','-b', type=str, help='base directory')
     parser.add_argument('--out_name', '-o', type=str, help="output file name")
-    parser.add_argument('--Replace', '-R', type=str, help="replace (1=yes, 0=no)")
     parser.add_argument('--centers', action="store_true")
     parser.add_argument('--edges', action="store_true")
     parser.add_argument('--corners', action="store_true")
@@ -352,6 +406,9 @@ def main(argv):
     parser.add_argument('--laser_only','-l', action="store_true")
     parser.add_argument('--map_dir','-m', type=str)
     parser.add_argument('--firn_correction','-f', type=str, default=None)
+    parser.add_argument('--mask_file', type=str)
+    parser.add_argument('--geoid_file', type=str)
+    parser.add_argument('--calc_error_file','-c', type=str)
     args=parser.parse_args()
 
 
@@ -360,14 +417,15 @@ def main(argv):
         plt.show()
         return h
 
+    
     args.grid_spacing = [np.float(temp) for temp in args.grid_spacing.split(',')]
     args.time_span = [np.float(temp) for temp in args.time_span.split(',')]
 
     spacing={'z0':args.grid_spacing[0], 'dz':args.grid_spacing[1], 'dt':args.grid_spacing[2]}
     E_RMS={'d2z0_dx2':args.E_d2z0dx2, 'd3z_dx2dt':args.E_d3zdx2dt, 'd2z_dxdt':args.E_d3zdx2dt*args.data_gap_scale,  'd2z_dt2':args.E_d2zdt2}
-
+    
+    reread_dirs=None
     if args.centers:
-        reread_dirs=None
         dest_dir = args.base_directory+'/centers'
     if args.edges or args.corners:
         reread_dirs=[args.base_directory+'/centers']
@@ -376,17 +434,31 @@ def main(argv):
         reread_dirs += [args.base_directory+'/edges']
         dest_dir = args.base_directory+'/corners'
 
+    if args.calc_error_file is not None:
+        dest_dir=os.path.dirname(args.calc_error_file)
+        # get xy0 from the filename
+        re_match=re.compile('E(.*)_N(.*).h5').search(args.calc_error_file)
+        args.xy0=[float(re_match.group(ii))*1000 for ii in [1, 2]]
+
+
     if not os.path.isdir(dest_dir):
         os.mkdir(dest_dir)
 
     if args.out_name is None:
         args.out_name=dest_dir + '/E%d_N%d.h5' % (args.xy0[0]/1e3, args.xy0[1]/1e3)
 
-    fit_OIB(args.xy0, Wxy=4e4, E_RMS=E_RMS, t_span=args.time_span, spacing=spacing,  hemisphere=args.Hemisphere, reread_dirs=reread_dirs, \
-            out_name=args.out_name, replace=args.Replace, DOPLOT=False, laser_only=args.laser_only, spring_only=args.spring_only, firn_correction=args.firn_correction)
+    fit_OIB(args.xy0, Wxy=args.Width, E_RMS=E_RMS, t_span=args.time_span, spacing=spacing, \
+            hemisphere=args.Hemisphere, reread_dirs=reread_dirs, \
+            out_name=args.out_name, DOPLOT=False, laser_only=args.laser_only, \
+            spring_only=args.spring_only, firn_correction=args.firn_correction, \
+            mask_file=args.mask_file, geoid_file=args.geoid_file, calc_error_file=args.calc_error_file)
 
 if __name__=='__main__':
     main(sys.argv)
+
+#-200000 -2520000 --centers  @/home/ben//git_repos/LSsurf/default_GL_args.txt
+
+#-200000 -2520000 -g 500,4000,1 --calc_error_file /Volumes/ice2/ben/ATL14_test/d3zdxdt=0.00001_d2zdt2=4000_RACMO//centers/E-200_N-2520.h5  @/home/ben//git_repos/LSsurf/default_GL_args.txt
 
 # 0 0 -m /Volumes/ice2/ben/ATL14_test/Jako_d2zdt2=5000_d3z=0.00001_d2zdt2=1500_RACMO -W 4e4
 #-80000 -2320000 -W 40000 -t 2002.5 2019.5 -g 200 2000 1  -o /Volumes/ice2/ben/ATL14_test/Jako_d2zdt2=5000_d3z=0.00001_d2zdt2=1500_RACMO/E-80_N-2320.h5 --E_d3zdx2dt 0.00001 --E_d2zdt2 1500 -f RACMO

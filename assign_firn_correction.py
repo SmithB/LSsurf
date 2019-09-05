@@ -20,7 +20,6 @@ def assign_firn_correction(data, firn_correction, hemisphere):
             data.z -= data.h_firn
     elif firn_correction == 'RACMO':
         if hemisphere==1:
-            data.assign({'h_firn':interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y, FILL_VALUE=np.NaN)[0]})
             h_firn=interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y, FILL_VALUE=np.NaN)[0]
             bad=~np.isfinite(h_firn)        
             if np.any(bad):

@@ -13,7 +13,7 @@ from PointDatabase.point_data import point_data
 import scipy.stats as sps
 import os
 
-def tile_map(file=None, xy0=[], thedir='.', delta_x=2.e4, t_slice=[0, -1]):
+def tile_map(file=None, xy0=[], thedir='.', delta_x=4.e4, t_slice=[0, -1]):
     hax={}
     if file is None:
         xyr=np.round(np.array(xy0)/delta_x)*delta_x

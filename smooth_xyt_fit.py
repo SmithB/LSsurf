@@ -234,6 +234,7 @@ def parse_model(m, m0, G_data, G_dzbar, TOC, grids, bias_params, bias_model, dzd
     # reshape the components of m to the grid shapes
     m['z0']=np.reshape(m0[TOC['cols']['z0']], grids['z0'].shape)
     m['dz']=np.reshape(m0[TOC['cols']['dz']], grids['dz'].shape)
+    m['count']=np.reshape(np.array(G_data.toCSR().tocsc()[:,TOC['cols']['dz']].sum(axis=0)), grids['dz'].shape)
     
     # calculate height rates
     for lag in dzdt_lags:
@@ -483,7 +484,7 @@ def smooth_xyt_fit(**kwargs):
         # report the model-based estimate of the data points
         data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
         parse_model(m, m0, G_data, G_dzbar, Gc.TOC, grids, args['bias_params'], bias_model, dzdt_lags=args['dzdt_lags'])
-       # parse the resduals to assess the contributions of the total error:
+        # parse the resduals to assess the contributions of the total error:
         # Make the C matrix for the constraints
         TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
         rc=TCinv_cov.dot(Gc.toCSR().dot(m0))

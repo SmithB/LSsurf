@@ -193,6 +193,7 @@ def save_fit_to_file(S,  filename, sensor_dict=None, dzdt_lags=None):
         for ii, name in enumerate(['y','x','t']):
             h5f.create_dataset('/dz/'+name, data=S['grids']['dz'].ctrs[ii])
         h5f.create_dataset('/dz/dz', data=S['m']['dz'])
+        h5f.create_dataset('/dz/count', data=S['m']['count'])
         h5f.create_group('/z0')
         for ii, name in enumerate(['y','x']):
             h5f.create_dataset('/z0/'+name, data=S['grids']['z0'].ctrs[ii])

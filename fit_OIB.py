@@ -425,6 +425,7 @@ def main(argv):
     spacing={'z0':args.grid_spacing[0], 'dz':args.grid_spacing[1], 'dt':args.grid_spacing[2]}
     E_RMS={'d2z0_dx2':args.E_d2z0dx2, 'd3z_dx2dt':args.E_d3zdx2dt, 'd2z_dxdt':args.E_d3zdx2dt*args.data_gap_scale,  'd2z_dt2':args.E_d2zdt2}
     
+    
     reread_dirs=None
     if args.centers:
         dest_dir = args.base_directory+'/centers'
@@ -441,6 +442,8 @@ def main(argv):
         re_match=re.compile('E(.*)_N(.*).h5').search(args.calc_error_file)
         args.xy0=[float(re_match.group(ii))*1000 for ii in [1, 2]]
 
+    if not os.path.isdir(args.base_directory):
+        os.mkdir(args.base_directory)
     if not os.path.isdir(dest_dir):
         os.mkdir(dest_dir)
 

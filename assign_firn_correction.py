@@ -30,23 +30,42 @@ def assign_firn_correction(data, firn_correction, hemisphere):
                 h_firn[bad]=extrapolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time[bad], data.x[bad], data.y[bad], VARIABLE='zs', FILL_VALUE=np.NaN)[0]
             data.assign({'h_firn':h_firn})
             data.z -= data.h_firn
-    elif firn_correction == "RACMO_fac":
+    elif firn_correction in ["RACMO_fac", "RACMO_fac_smb"]:
         if hemisphere==1:
             h_fac = interpolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time, data.x, data.y, VARIABLE='FirnAir', FILL_VALUE=np.NaN)[0]
-            smb = racmo_interp_downscaled('/Volumes/ice1/tyler', "EPSG:3413", '3.0', 'SMB', data.time, data.x, data.y, FILL_VALUE=np.NaN)[0]
             # check if any data points are over "unglaciated" values
             bad=~np.isfinite(h_fac)
             if np.any(bad):
                 # extrapolate model to coordinates
                 h_fac[bad]=extrapolate_racmo_firn('/Volumes/ice1/tyler', "EPSG:3413", 'FGRN055', data.time[bad], data.x[bad], data.y[bad], VARIABLE='FirnAir', FILL_VALUE=np.NaN)[0]
-            # check if any data points are over invalid downscaled values
-            bad=~np.isfinite(smb)
-            if np.any(bad):
-                # extrapolate model to coordinates
-                smb[bad]=racmo_extrap_downscaled('/Volumes/ice1/tyler', "EPSG:3413", '3.0', 'SMB', data.time[bad], data.x[bad], data.y[bad], FILL_VALUE=np.NaN)[0]
-            data.assign({'fac':h_fac,'smb':smb})
+            data.z -= h_fac
+            data.assign({'fac':h_fac})
+        if firn_correction=="RACMO_fac_smb":
             # ice density used in RACMO models (kg/m^3)
             rho_model = 910.0
-            # calculate corrected height (convert smb from mmwe to m)
-            data.z -= data.fac + data.smb/rho_model
+            if hemisphere==1:
+                smb = interpolate_racmo_downscaled('/Volumes/ice1/tyler', "EPSG:3413", '3.0', 'SMB', data.time, data.x, data.y, FILL_VALUE=np.NaN)[0]
+                # check if any data points are over invalid downscaled values
+                bad=~np.isfinite(smb)
+                if np.any(bad):
+                    # extrapolate model to coordinates
+                    smb[bad]=extrapolate_racmo_downscaled('/Volumes/ice1/tyler', "EPSG:3413", '3.0', 'SMB', data.time[bad], data.x[bad], data.y[bad], FILL_VALUE=np.NaN)[0]
+                data.assign({'smb':smb/rho_model, 'firn':h_fac+smb/rho_model})
+                # calculate corrected height (convert smb from mmwe to m)
+                data.z -= data.smb/rho_model
     data.index(np.isfinite(data.z))
+
+def main():
+    import matplotlib.pyplot as plt
+    from PointDatabase import point_data
+    t=np.arange(2002, 2022, 0.1)
+    xy_jako=(-170000, -2280000)
+    corrections = ['RACMO_fac', 'RACMO_fac_smb', 'RACMO']
+    for correction in corrections:
+        data=point_data().from_dict({'time':t, 'x':np.ones_like(t)*xy_jako[0], 'y':np.ones_like(t)*xy_jako[1], 'z':np.zeros_like(t)})
+        assign_firn_correction(data, correction, 1)
+        plt.plot(data.time, data.z)
+    plt.legend(corrections)
+if __name__=="__main__":
+    main()
+

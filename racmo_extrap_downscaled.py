@@ -47,6 +47,7 @@ PYTHON DEPENDENCIES:
 		https://github.com/scikit-learn/scikit-learn
 
 UPDATE HISTORY:
+	Updated 09/2019: read subsets of DS1km netCDF4 file to save memory
 	Written 09/2019
 """
 from __future__ import print_function
@@ -97,9 +98,10 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 
 	#-- Open the RACMO NetCDF file for reading
 	fileID = netCDF4.Dataset(os.path.join(input_dir,input_file), 'r')
-	#-- Get data from each netCDF variable and remove singleton dimensions
+	#-- input shape of RACMO data
+	nt,ny,nx = fileID[VARNAME].shape
+	#-- Get data from each netCDF variable
 	d = {}
-	d[VARNAME] = np.squeeze(fileID.variables[VARNAME][:].copy())
 	#-- cell origins on the bottom right
 	dx = np.abs(fileID.variables['x'][1]-fileID.variables['x'][0])
 	dy = np.abs(fileID.variables['y'][1]-fileID.variables['y'][0])
@@ -111,10 +113,6 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 	#-- mask object for interpolating data
 	d['MASK'] = np.array(fileID.variables['MASK'][:],dtype=np.bool)
 	i,j = np.nonzero(d['MASK'])
-	#-- input shape of RACMO data
-	nt,ny,nx = np.shape(d[VARNAME])
-	#-- close the NetCDF files
-	fileID.close()
 
 	#-- convert RACMO latitude and longitude to input coordinates (EPSG)
 	proj1 = pyproj.Proj("+init={0}".format(EPSG))
@@ -135,7 +133,9 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 	if np.any((tdec >= d['TIME'].min()) & (tdec <= d['TIME'].max())):
 		#-- indices of dates for interpolated days
 		ind,=np.nonzero((tdec >= d['TIME'].min()) & (tdec < d['TIME'].max()))
-		f = scipy.interpolate.interp1d(d['TIME'], np.arange(nt), kind='linear')
+		#-- determine which subset of time to read from the netCDF4 file
+		f = scipy.interpolate.interp1d(d['TIME'], np.arange(nt), kind='linear',
+			fill_value=(0,nt-1), bounds_error=False)
 		date_indice = f(tdec[ind]).astype(np.int)
 		#-- set interpolation type (1: interpolated in time)
 		extrap_type[ind] = 1
@@ -154,8 +154,8 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 			s = np.sum(power_inverse_distance, axis=1)
 			w = power_inverse_distance/np.broadcast_to(s[:,None],(count,N))
 			#-- RACMO variables for times before and after tdec
-			var1 = d[VARNAME][k,i,j]
-			var2 = d[VARNAME][k+1,i,j]
+			var1 = fileID.variables[VARNAME][k,i,j].copy()
+			var2 = fileID.variables[VARNAME][k+1,i,j].copy()
 			#-- linearly interpolate to date
 			dt = (tdec[kk] - d['TIME'][k])/(d['TIME'][k+1] - d['TIME'][k])
 			#-- spatially extrapolate using inverse distance weighting
@@ -188,7 +188,7 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 			#-- time at k
 			T[k] = d['TIME'][k]
 			#-- spatially extrapolate variables
-			var1 = d[VARNAME][k,i,j]
+			var1 = fileID.variables[VARNAME][k,i,j].copy()
 			VAR[:,k] = np.sum(w*var1[indices],axis=1)
 
 		#-- calculate regression model
@@ -223,7 +223,7 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 			#-- time at k
 			T[k] = d['TIME'][kk]
 			#-- spatially extrapolate variables
-			var1 = d[VARNAME][kk,i,j]
+			var1 = fileID.variables[VARNAME][kk,i,j].copy()
 			VAR[:,k] = np.sum(w*var1[indices],axis=1)
 
 		#-- calculate regression model
@@ -238,6 +238,9 @@ def extrapolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 		fv = FILL_VALUE
 	else:
 		fv = 0.0
+
+	#-- close the NetCDF files
+	fileID.close()
 
 	#-- return the extrapolated values
 	return (extrap_var,extrap_type,fv)

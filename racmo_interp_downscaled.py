@@ -39,6 +39,7 @@ PYTHON DEPENDENCIES:
 		https://pypi.org/project/pyproj/
 
 UPDATE HISTORY:
+	Updated 09/2019: read subsets of DS1km netCDF4 file to save memory
 	Written 09/2019
 """
 from __future__ import print_function
@@ -89,9 +90,10 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 
 	#-- Open the RACMO NetCDF file for reading
 	fileID = netCDF4.Dataset(os.path.join(input_dir,input_file), 'r')
+	#-- input shape of RACMO data
+	nt,ny,nx = fileID[VARNAME].shape
 	#-- Get data from each netCDF variable and remove singleton dimensions
 	d = {}
-	d[VARNAME] = np.squeeze(fileID.variables[VARNAME][:].copy())
 	#-- cell origins on the bottom right
 	dx = np.abs(fileID.variables['x'][1]-fileID.variables['x'][0])
 	dy = np.abs(fileID.variables['y'][1]-fileID.variables['y'][0])
@@ -103,10 +105,6 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 	#-- mask object for interpolating data
 	d['MASK'] = np.array(fileID.variables['MASK'][:],dtype=np.bool)
 	i,j = np.nonzero(d['MASK'])
-	#-- input shape of RACMO data
-	nt,ny,nx = np.shape(d[VARNAME])
-	#-- close the NetCDF files
-	fileID.close()
 
 	#-- convert projection from input coordinates (EPSG) to model coordinates
 	proj1 = pyproj.Proj("+init={0}".format(EPSG))
@@ -131,9 +129,21 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 		#-- indices of dates for interpolated days
 		ind, = np.nonzero((tdec >= d['TIME'].min()) &
 			(tdec <= d['TIME'].max()) & valid)
+		#-- determine which subset of time to read from the netCDF4 file
+		f = scipy.interpolate.interp1d(d['TIME'], np.arange(nt), kind='linear',
+			fill_value=(0,nt-1), bounds_error=False)
+		date_indice = f(tdec[ind]).astype(np.int)
+		#-- months to read
+		months = np.arange(date_indice.min(),date_indice.max()+1)
+		nm = len(months)
+		#-- extract variable for months of interest
+		d[VARNAME] = np.zeros((nm,ny,nx))
+		for i,m in enumerate(months):
+			d[VARNAME][i,:,:] = fileID.variables[VARNAME][m,:,:].copy()
+
 		#-- create an interpolator for variable
 		RGI = scipy.interpolate.RegularGridInterpolator(
-			(d['TIME'],d['y'],d['x']), d[VARNAME])
+			(d['TIME'][months],d['y'],d['x']), d[VARNAME])
 		#-- create an interpolator for input mask
 		MI = scipy.interpolate.RegularGridInterpolator(
 			(d['y'],d['x']), d['MASK'])
@@ -167,7 +177,7 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 			T[k] = d['TIME'][k]
 			#-- spatially interpolate variable
 			spl = scipy.interpolate.RectBivariateSpline(d['x'], d['y'],
-				d[VARNAME][k,:,:].T, kx=1, ky=1)
+				fileID.variables[VARNAME][k,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
 			VAR[:,k] = spl.ev(ix[ind],iy[ind])
 
@@ -200,7 +210,7 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 			T[k] = d['TIME'][kk]
 			#-- spatially interpolate variable
 			spl = scipy.interpolate.RectBivariateSpline(d['x'], d['y'],
-				d[VARNAME][kk,:,:].T, kx=1, ky=1)
+				fileID.variables[VARNAME][kk,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
 			VAR[:,k] = spl.ev(ix[ind],iy[ind])
 
@@ -216,6 +226,9 @@ def interpolate_racmo_downscaled(base_dir, EPSG, VERSION, PRODUCT, tdec, X, Y,
 		fv = FILL_VALUE
 	else:
 		fv = 0.0
+
+	#-- close the NetCDF files
+	fileID.close()
 
 	#-- return the interpolated values
 	return (interp_var,interp_type,fv)

@@ -271,7 +271,7 @@ def smooth_xyt_fit(**kwargs):
     'mask_scale':None,
     'compute_E':False,
     'max_iterations':10,
-    'srs_WKT': None,
+    'srs_proj4': None,
     'N_subset': None,
     'bias_params': None,
     'repeat_res':None,
@@ -304,9 +304,9 @@ def smooth_xyt_fit(**kwargs):
     tic=time()
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
-    grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2), name='z0', srs_WKT=args['srs_WKT'], mask_file=args['mask_file'])
+    grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2), name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
-        [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], col_0=grids['z0'].N_nodes, name='dz', srs_WKT=args['srs_WKT'], mask_file=args['mask_file'])
+        [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], col_0=grids['z0'].N_nodes, name='dz', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
@@ -333,11 +333,11 @@ def smooth_xyt_fit(**kwargs):
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
     if args['mask_file'] is not None:
-        temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_WKT=args['srs_WKT'], mask_file=args['mask_file'])
+        temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
         data_mask=lin_op(temp, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['z0'].mask.ravel())
         data_mask[~np.isfinite(data_mask)]=0
         if np.any(data_mask==0):
-            data.subset(~(data_mask==0))
+            data.index(~(data_mask==0))
             valid_data[valid_data]= ~(data_mask==0)
 
     # Check if we have any data.  If not, quit

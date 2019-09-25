@@ -6,8 +6,8 @@ Created on Mon Dec  4 14:07:39 2017
 """
 #import scipy.sparse as sp
 import numpy as np
-from osgeo import gdal 
- 
+from osgeo import gdal, osr 
+
 class fd_grid: 
     # a fd_grid is an object that defines the nodal locations and their indices
     # for a regular grid of points. In a k-dimensional grid, each node has k
@@ -16,7 +16,7 @@ class fd_grid:
     # first global index can be shifted by specifying a nonzero col_0 value,
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
-    def __init__(self, bounds, deltas, col_0=0, col_N=None, srs_WKT=None, mask_file=None, name=''):
+    def __init__(self, bounds, deltas, col_0=0, col_N=None, srs_proj4=None, mask_file=None, name=''):
         self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
@@ -25,7 +25,7 @@ class fd_grid:
         self.N_nodes=np.prod(self.shape)  # total number of nodes
         self.stride=np.flipud(np.cumprod(np.flipud(np.r_[self.shape[1:], 1]))) # difference in global_ind between adjacent nodes
         self.col_0=col_0 # first global_ind for the grid
-        self.srs_WKT=srs_WKT # Well Known Text for the spatial reference system of the grid
+        self.srs_proj4=srs_proj4 # Well Known Text for the spatial reference system of the grid
         self.mask_file=mask_file
         self.mask=None
         self.name=name # name of the degree of freedom specified by the grid
@@ -76,11 +76,11 @@ class fd_grid:
         ind=self.col_0+np.ravel_multi_index(cell_sub, self.shape)
         return ind
 
-    def read_geotif(self, filename, srs_WKT=None, dataType=gdal.GDT_Float32, interp_algorithm=gdal.GRA_NearestNeighbour):
-        # the WKT (well known text) for the grid needs to be provided as a keyword, 
+    def read_geotif(self, filename, srs_proj4=None, dataType=gdal.GDT_Float32, interp_algorithm=gdal.GRA_NearestNeighbour):
+  
         # or it can be stored in the grid
-        if srs_WKT is None:
-            srs_WKT=self.srs_WKT
+        if srs_proj4 is None:
+            srs_proj4=self.srs_proj4
         # the gdal geotransform gives the top left corner of each pixel.
         # define the geotransform that matches the current grid:
         #       [  x0,                                 dx,           dxy,      y0,                            dyx,     dy       ]
@@ -90,6 +90,9 @@ class fd_grid:
         memDriver=gdal.GetDriverByName('Mem')
         #                                nx,              ny,              bands,   datatype
         temp_ds=memDriver.Create('', int(self.shape[1]), int(self.shape[0]), int(1), dataType)
+        srs = osr.SpatialReference()
+        srs.ImportFromProj4(srs_proj4)
+        srs_WKT = srs.ExportToWkt()
         temp_ds.SetProjection(srs_WKT)       
         temp_ds.SetGeoTransform(this_GT)
         

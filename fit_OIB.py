@@ -42,10 +42,12 @@ def read_ICESat(xy0, W, gI_file, sensor=1):
     fields=[ 'IceSVar', 'deltaEllip', 'numPk', 'ocElv', 'reflctUC', 'satElevCorr',  'time',  'x', 'y', 'z']
     D0=geo_index().from_file(gI_file).query_xy_box(xy0[0]+np.array([-W['x']/2, W['x']/2]), xy0[1]+np.array([-W['y']/2, W['y']/2]), fields=fields)
     for ind, D in enumerate(D0):
-        good=(D.IceSVar < 0.035) & (D.reflctUC >0.05) & (D.satElevCorr < 1) & (D.numPk==1)
-        good=good.ravel()
-        D.subset(good, datasets=['x','y','z','time'])
-        D.assign({'sigma':np.zeros_like(D.x)+0.02, 'sigma_corr':np.zeros_like(D.x)+0.25})
+        
+        good=(D.IceSVar < 0.035) & (D.reflctUC > 0.05) & (D.satElevCorr < 1) & (D.numPk==1)
+        good = good & (D.time > 731825)  # remove laser 1!
+        good = good.ravel()
+        D = D.subset(good, datasets=['x','y','z','time']) # use the subset method to pick the datasets we want.
+        D.assign({'sigma':np.zeros_like(D.x)+0.02, 'sigma_corr':np.zeros_like(D.x)+0.05})
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
         D0[ind]=D
     return D0
@@ -246,6 +248,8 @@ def save_errors_to_file( S, filename, sensor_dict=None):
 
 def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=4.e4 ):
     files=[]
+    mask_G=mapData().from_geotif('/Volumes/ice1/ben/GimpMasks_v1.1/GimpIceMask_1km.tif')
+    
     if file is not None:
         files += [file]
     if glob_str is not None:
@@ -258,7 +262,12 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=4
             if np.isfinite(spacing):
                 w01=np.array([-0.5, 0.5])*spacing
                 D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
-                h.append(plt.imshow((D.z[:,:,t_slice[1]]-D.z[:,:,t_slice[0]])/(D.t[t_slice[1]]-D.t[t_slice[0]]), \
+                pad=np.array([-10000, 10000])
+                mask_G=mapData().from_geotif('/Volumes/ice1/ben/GimpMasks_v1.1/GimpIceMask_1km.tif', bounds=[D.extent[0:2]+pad, D.extent[2:4]+pad])
+                mask=mask_G.interp(D.x, D.y, gridded=True)
+                mask[mask>0.9]=1
+                mask[mask<=0.9]=np.NaN
+                h.append(plt.imshow((D.z[:,:,t_slice[1]]-D.z[:,:,t_slice[0]])/(D.t[t_slice[1]]-D.t[t_slice[0]])*mask, \
                             extent=D.extent, vmin=caxis[0], vmax=caxis[1], label=file, origin='lower',
                             cmap="Spectral"))
                 if np.all(D.z.ravel()==0):
@@ -276,7 +285,7 @@ def make_map(file=None, glob_str=None, t_slice=[0, -1], caxis=[-1, 1], spacing=4
     plt.show()
     return h, zero_files
 
-def dump_geotifs(glob_str=None, fields=['dz','z0'], tif_list=None, out_dir='.', W=4.e4):
+def dump_geotifs(glob_str=None, fields=['dz','z0'], tif_list=None, out_dir='.', W=4.e4, EPSG=3413):
     if not os.path.isdir(out_dir):
         os.mkdir(out_dir)
     files=glob.glob(glob_str)
@@ -285,7 +294,60 @@ def dump_geotifs(glob_str=None, fields=['dz','z0'], tif_list=None, out_dir='.', 
             D=mapData().from_h5(file, group='/'+field+'/', field_mapping={'z':field})
             w01=np.array([-0.5, 0.5])*W
             D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
-            D.to_geotif(out_dir+'/'+field+'_'+os.path.basename(file))
+            out_file=os.path.splitext(os.path.basename(file))[0]+'.tif'
+            D.to_geotif(out_dir+'/'+field+'_'+out_file, srs_epsg=EPSG)
+    
+def calc_mass(file, out_dir, mask_file, spacing=4.e4, t_fine=None, SMB_model=None):
+    
+    D=mapData().from_h5(file, group='/dz/', field_mapping={'z':'dz'})
+    w01=np.array([-0.5, 0.5])*spacing
+    D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
+    pad=np.array([-10000, 10000])
+    mask_G=mapData().from_geotif(mask_file, bounds=[D.extent[0:2]+pad, D.extent[2:4]+pad])
+    mask=mask_G.interp(D.x, D.y, gridded=True)
+    mask[mask>0.9]=1
+    mask[mask<=0.9]=np.NaN
+    z_SMB=np.zeros_like(D.z)
+    m_smb_fine=np.zeros_like(t_fine)+np.NaN
+    M_bar=np.zeros_like(D.t)
+    yg, xg, tg =np.meshgrid(D.y, D.x, t_fine)
+    D_SMB=point_data().from_dict({'x':xg.ravel(),'y':yg.ravel(),'time':tg.ravel(),'z':np.zeros_like(tg.ravel())})
+    assign_firn_correction(D_SMB, SMB_model, 1)
+    this_z_smb = D_SMB.smb.reshape(xg.shape)
+    
+        # the edgies of adjacent tiles overlap, so we need to downweight the edges
+    cell_mass = np.ones_like(mask) * 910 * (D.x[1]-D.x[0])**2
+    cell_mass[:,0]  /= 2
+    cell_mass[:,-1] /= 2
+    cell_mass[0,:]  /= 2
+    cell_mass[-1,:] /= 2
+    
+    for t_ind in range(t_fine.size):
+        this_z_smb[:,:,t_ind] *= mask
+        
+    for t_ind in range(D.z.shape[2]):
+        t_slice=np.abs(t_fine-D.t[t_ind])<0.5
+        z_SMB[:,:,t_ind] += np.nanmean(this_z_smb[:,:,t_slice], axis=2)
+        D.z[:,:,t_ind] *= mask
+        M_bar[t_ind]=np.nansum(np.nansum(D.z[:,:,t_ind]*cell_mass, axis=0))
+        
+    for t_ind in range(t_fine.size):
+        this_z_smb[:,:,t_ind] *= cell_mass   
+        
+    m_smb_fine = np.nansum(np.nansum(this_z_smb, axis=0), axis=0).ravel()
+    m_alt_fine=np.interp(t_fine, D.t, M_bar)
+    out_file=out_dir+'/'+os.path.basename(file)
+    if os.path.isfile(out_file):
+        os.remove(out_file)
+    with h5py.File(out_file,'w') as h5f:
+        h5f.create_dataset('/altimetry/x', data=D.x)
+        h5f.create_dataset('/altimetry/y', data=D.y)
+        h5f.create_dataset('/altimetry/t', data=D.t)
+        h5f.create_dataset('/altimetry/z', data=D.z)
+        h5f.create_dataset('/mass/m_altimetry', data=m_alt_fine)
+        h5f.create_dataset('/altimetry/z_SMB', data=z_SMB)
+        h5f.create_dataset('/mass/t', data=t_fine)
+        h5f.create_dataset('/mass/m_SMB', data=m_smb_fine)
     
 
 def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  \
@@ -364,12 +426,12 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
             vals += [val]
     print("for DEMs, found %d data" % np.sum(np.in1d(data.sensor, np.array(vals))==0))
 
-    # run the fit
+    # run the fit    
     S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
                      reference_epoch=reference_epoch, N_subset=N_subset, compute_E=compute_E,
                      bias_params=['day','sensor'], repeat_res=repeat_res, max_iterations=max_iterations, 
-                     srs_WKT=SRS_proj4, VERBOSE=True, Edit_only=Edit_only, data_slope_sensors=DEM_sensors, 
-                     mask_scale={0:10, 1:1})
+                     srs_proj4=SRS_proj4, VERBOSE=True, Edit_only=Edit_only, data_slope_sensors=DEM_sensors, 
+                     mask_file=mask_file, mask_scale={0:10, 1:1})
     if Edit_only:
         print('N_subsets=%d, t=%f' % ( N_subset, S['timing']['edit_by_subset']))
 

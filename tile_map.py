@@ -22,6 +22,7 @@ def tile_map(file=None, xy0=[], thedir='.', delta_x=4.e4, t_slice=[0, -1]):
         if not os.path.isfile(file):
             print("%s not found"%file)
             return
+    print("file = %s" % file)
     dz=mapData().from_h5(file, group='/dz/', field_mapping={'z':'dz'})
     hax['dz']=plt.subplot(221)
     plt.imshow((dz.z[:,:,t_slice[1]]-dz.z[:,:,t_slice[0]]), extent=dz.extent,  label=file, origin='lower')
@@ -31,17 +32,21 @@ def tile_map(file=None, xy0=[], thedir='.', delta_x=4.e4, t_slice=[0, -1]):
     hax['time']=plt.subplot(222, sharex=hax['dz'], sharey=hax['dz'])
     D=point_data().from_file(file, group='/data/')
     D1=D.subset(D.three_sigma_edit>0.5)
-    plt.scatter(D1.x, D1.y, 2, c=D1.time, linewidth=0); plt.colorbar()
+    D1.assign({'r':D1.z-D1.z_est})
+    D1.assign({'z0':z0.interp(D1.x, D1.y)})
+
+    #plt.scatter(D1.x, D1.y, 2, c=D1.time, linewidth=0); plt.colorbar()
+    N=mapData().from_h5(file,  group='dz/', field_mapping={'z':'count'})
+    plt.imshow(N.z.sum(axis=2), extent=N.extent, origin='lower'); plt.colorbar()
     
     hax['r']=plt.subplot(223, sharex=hax['dz'], sharey=hax['dz'])
-    D1.assign({'r':D1.z-D1.z_est})
-    order=np.argsort(np.abs(D1.r))
-    
-    plt.scatter(D1.x[order], D1.y[order], 4, c=D1.r[order], linewidth=0, 
-                vmin=sps.scoreatpercentile(D1.r, 1), vmax=sps.scoreatpercentile(D1.r, 99)); plt.colorbar()
+    plt.imshow(np.sum(N.z>0, axis=2), extent=N.extent, origin='lower') 
+    plt.colorbar()
+    #order=np.argsort(np.abs(D1.r))
+    #plt.scatter(D1.x[order], D1.y[order], 4, c=D1.r[order], linewidth=0, 
+    #            vmin=sps.scoreatpercentile(D1.r, 1), vmax=sps.scoreatpercentile(D1.r, 99)); plt.colorbar()
     
     hax['z_vs_t']=plt.subplot(224)
-    D1.assign({'z0':z0.interp(D1.x, D1.y)})
     months=np.round(D1.time*12)/12
     zbar=[]; zsigma=[];
     zbar_nofirn=[]
@@ -64,7 +69,7 @@ def tile_map(file=None, xy0=[], thedir='.', delta_x=4.e4, t_slice=[0, -1]):
     if len(zbar_nofirn)> 0:
         plt.plot(np.unique(months), zbar_nofirn ,'*', label='data without firn')
     hl=plt.legend()
-    return D1, hax
+    return hax, D1, dz, z0, N
 
 def main():
     xy0=np.array([  200000., -1484000.])

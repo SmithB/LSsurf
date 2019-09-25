@@ -62,10 +62,11 @@ def reread_data_from_fits(xy0, W, dir_list, single_file=False,  template='E%d_N%
     select the data closest to the nearest file's center
     """
     if single_file:
-        d_i, d_j = np.meshgrid([-1., 0, 1.], [-1., 0., 1.])
-    else:
         d_i=np.array([0])
         d_j=np.array([0])
+    else:
+        d_i, d_j = np.meshgrid([-1., 0, 1.], [-1., 0., 1.])
+
     Lb=1.e4
     db0=(1+1j)*Lb/2
     data_list=[]

@@ -310,12 +310,14 @@ def calc_mass(file, out_dir, mask_file, spacing=4.e4, t_fine=None, SMB_model=Non
     z_SMB=np.zeros_like(D.z)
     m_smb_fine=np.zeros_like(t_fine)+np.NaN
     M_bar=np.zeros_like(D.t)
-    yg, xg, tg =np.meshgrid(D.y, D.x, t_fine)
+    xg, yg, tg =np.meshgrid(D.x, D.y, t_fine)
     D_SMB=point_data().from_dict({'x':xg.ravel(),'y':yg.ravel(),'time':tg.ravel(),'z':np.zeros_like(tg.ravel())})
-    assign_firn_correction(D_SMB, SMB_model, 1)
-    this_z_smb = D_SMB.smb.reshape(xg.shape)
-    
-        # the edgies of adjacent tiles overlap, so we need to downweight the edges
+    assign_firn_correction(D_SMB, SMB_model, 1, subset_valid=False)
+    if 'smb' in D_SMB.list_of_fields:
+        this_z_smb = D_SMB.smb.reshape(xg.shape)
+    elif 'fac' in D_SMB.list_of_fields:
+        this_z_smb = D_SMB.fac.reshape(xg.shape)
+    # the edges of adjacent tiles overlap, so we need to downweight the edges
     cell_mass = np.ones_like(mask) * 910 * (D.x[1]-D.x[0])**2
     cell_mass[:,0]  /= 2
     cell_mass[:,-1] /= 2

@@ -14,7 +14,7 @@ from LSsurf.racmo_extrap_downscaled import extrapolate_racmo_downscaled
 
 from LSsurf.interp_MAR_firn import interp_MAR_firn
 
-def assign_firn_correction(data, firn_correction, hemisphere):
+def assign_firn_correction(data, firn_correction, hemisphere, subset_valid=True):
     # if we're rereading data, it already has the firn correction applied
     if firn_correction == 'MAR':
         if hemisphere==1:
@@ -55,7 +55,7 @@ def assign_firn_correction(data, firn_correction, hemisphere):
                 data.assign({'smb':smb/rho_model, 'firn':h_fac+smb/rho_model})
                 # calculate corrected height (convert smb from mmwe to m)
                 data.z -= data.smb
-    if firn_correction not in ['RACMO_smb']:
+    if subset_valid:
         data.index(np.isfinite(data.z))
 
 def main():

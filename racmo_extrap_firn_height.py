@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 racmo_extrap_firn_height.py
-Written by Tyler Sutterley (08/2019)
+Written by Tyler Sutterley (10/2019)
 Interpolates and extrapolates firn heights to times and coordinates
 
 Uses fast nearest-neighbor search algorithms
@@ -24,6 +24,7 @@ COMMAND LINE OPTIONS:
 	--coordinate=X: Polar Stereographic X and Y of point
 	--date=X: Date to interpolate in year-decimal format
 	--csv=X: Read dates and coordinates from a csv file
+	--sigma=X: Standard deviation for Gaussian kernel
 	--fill-value: Replace invalid values with fill value
 		(default uses original fill values from data file)
 
@@ -42,6 +43,7 @@ PYTHON DEPENDENCIES:
 		https://github.com/scikit-learn/scikit-learn
 
 UPDATE HISTORY:
+	Updated 10/2019: Gaussian average firn fields before interpolation
 	Updated 09/2019: use scipy interpolate to find date indices
 	Forked 08/2019 from racmo_interp_firn_height.py
 	Updated 08/2019: convert to model coordinates (rotated pole lat/lon)
@@ -59,6 +61,7 @@ import pyproj
 import getopt
 import netCDF4
 import numpy as np
+import scipy.ndimage
 import scipy.interpolate
 from sklearn.neighbors import KDTree, BallTree
 
@@ -73,8 +76,8 @@ def set_projection(FIRN_MODEL):
 	return projection_flag
 
 #-- PURPOSE: read and interpolate RACMO2.3 firn corrections
-def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-	SEARCH='BallTree', N=10, POWER=2.0, VARIABLE='zs', FILL_VALUE=None):
+def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y, SEARCH='BallTree',
+	N=10, POWER=2.0, SIGMA=1.5, VARIABLE='zs', FILL_VALUE=None):
 
 	#-- set parameters based on input model
 	FIRN_FILE = {}
@@ -122,6 +125,31 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 
 	#-- indices of specified ice mask
 	i,j = np.nonzero(fd[VARIABLE][0,:,:] != fv)
+	#-- create mask object for interpolating data
+	fd['mask'] = np.zeros((ny,nx))
+	fd['mask'][i,j] = 1.0
+
+	#-- use a gaussian filter to smooth mask
+	gs = {}
+	gs['mask'] = scipy.ndimage.gaussian_filter(fd['mask'], SIGMA,
+		mode='constant', cval=0)
+	#-- indices of smoothed ice mask
+	ii,jj = np.nonzero(np.ceil(gs['mask']) == 1.0)
+	#-- use a gaussian filter to smooth each firn field
+	gs[VARIABLE] = np.ma.zeros((nt,ny,nx), fill_value=fv)
+	gs[VARIABLE].mask = (gs['mask'] == 0.0)
+	for t in range(nt):
+		#-- replace fill values before smoothing data
+		temp1 = np.zeros((ny,nx))
+		#-- reference to first firn field
+		temp1[i,j] = fd[VARIABLE][t,i,j] - fd[VARIABLE][0,i,j]
+		#-- smooth firn field
+		temp2 = scipy.ndimage.gaussian_filter(temp1, SIGMA,
+			mode='constant', cval=0)
+		#-- scale output smoothed firn field
+		gs[VARIABLE][t,ii,jj] = temp2[ii,jj]/gs['mask'][ii,jj]
+		#-- replace valid firn values with original
+		gs[VARIABLE][t,i,j] = temp1[i,j]
 
 	#-- convert RACMO latitude and longitude to input coordinates (EPSG)
 	proj1 = pyproj.Proj("+init={0}".format(EPSG))
@@ -130,7 +158,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 
 	#-- construct search tree from original points
 	#-- can use either BallTree or KDTree algorithms
-	xy1 = np.concatenate((xg[i,j,None],yg[i,j,None]),axis=1)
+	xy1 = np.concatenate((xg[ii,jj,None],yg[ii,jj,None]),axis=1)
 	tree = BallTree(xy1) if (SEARCH == 'BallTree') else KDTree(xy1)
 
 	#-- output interpolated arrays of firn variable (height or firn air content)
@@ -161,8 +189,8 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 			s = np.sum(power_inverse_distance, axis=1)
 			w = power_inverse_distance/np.broadcast_to(s[:,None],(count,N))
 			#-- firn height or air content for times before and after tdec
-			firn1 = fd[VARIABLE][k,i,j]
-			firn2 = fd[VARIABLE][k+1,i,j]
+			firn1 = gs[VARIABLE][k,ii,jj]
+			firn2 = gs[VARIABLE][k+1,ii,jj]
 			#-- linearly interpolate to date
 			dt = (tdec[kk] - fd['time'][k])/(fd['time'][k+1] - fd['time'][k])
 			#-- spatially extrapolate using inverse distance weighting
@@ -195,7 +223,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 			#-- time at k
 			T[k] = fd['time'][k]
 			#-- spatially extrapolate firn elevation or air content
-			firn1 = fd[VARIABLE][k,i,j]
+			firn1 = gs[VARIABLE][k,ii,jj]
 			FIRN[:,k] = np.sum(w*firn1[indices],axis=1)
 
 		#-- calculate regression model
@@ -230,7 +258,7 @@ def extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 			#-- time at k
 			T[k] = fd['time'][kk]
 			#-- spatially extrapolate firn elevation or air content
-			firn1 = fd[VARIABLE][kk,i,j]
+			firn1 = gs[VARIABLE][kk,ii,jj]
 			FIRN[:,k] = np.sum(w*firn1[indices],axis=1)
 
 		#-- calculate regression model
@@ -283,7 +311,7 @@ def regress_model(t_in, d_in, t_out, ORDER=2, CYCLES=None, RELATIVE=None):
 #-- PURPOSE: interpolate RACMO firn height to a set of coordinates and times
 #-- wrapper function to extract EPSG and print to terminal
 def racmo_extrap_firn_height(base_dir, MODEL, COORDINATES=None,
-	DATES=None, CSV=None, FILL_VALUE=None):
+	DATES=None, CSV=None, SIGMA=None, FILL_VALUE=None):
 
 	#-- get projection information from model shortname
 	#-- this is the projection of the coordinates being interpolated into
@@ -308,9 +336,9 @@ def racmo_extrap_firn_height(base_dir, MODEL, COORDINATES=None,
 
 	#-- read and interpolate/extrapolate RACMO2.3 firn corrections
 	zs,itype,fv = extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-		VARIABLE='zs', FILL_VALUE=FILL_VALUE)
+		VARIABLE='zs', SIGMA=SIGMA, FILL_VALUE=FILL_VALUE)
 	air,itype,fv = extrapolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-		VARIABLE='FirnAir', FILL_VALUE=FILL_VALUE)
+		VARIABLE='FirnAir', SIGMA=SIGMA, FILL_VALUE=FILL_VALUE)
 	interpolate_types = ['invalid','interpolated','backward','forward']
 	for z,a,t in zip(zs,air,itype):
 		print(z,a,interpolate_types[t])
@@ -328,13 +356,14 @@ def usage():
 	print(' --coordinate=X\tPolar Stereographic X and Y of point')
 	print(' --date=X\t\tDates to interpolate in year-decimal format')
 	print(' --csv=X\t\tRead dates and coordinates from a csv file')
+	print(' --sigma=X\t\tStandard deviation for Gaussian kernel')
 	print(' --fill-value\tReplace invalid values with fill value\n')
 
 #-- Main program that calls racmo_extrap_firn_height()
 def main():
 	#-- Read the system arguments listed after the program
 	long_options = ['help','directory=','smb=','coordinate=','date=','csv=',
-		'fill-value=']
+		'sigma=','fill-value=']
 	optlist,arglist = getopt.getopt(sys.argv[1:], 'hD:S:', long_options)
 
 	#-- data directory
@@ -346,6 +375,8 @@ def main():
 	DATES = None
 	#-- read coordinates and dates from csv file
 	CSV = None
+	#-- standard deviation for gaussian kernel
+	SIGMA = 1.5
 	#-- invalid value (default is from RACMO file)
 	FILL_VALUE = None
 	#-- extract parameters
@@ -363,12 +394,14 @@ def main():
 			DATES = arg.split(',')
 		elif opt in ("--csv"):
 			CSV = os.path.expanduser(arg)
+		elif opt in ("--sigma"):
+			SIGMA = np.float(arg)
 		elif opt in ("--fill-value"):
 			FILL_VALUE = eval(arg)
 
 	#-- run program with parameters
 	racmo_extrap_firn_height(base_dir, MODEL, COORDINATES=COORDINATES,
-		DATES=DATES, CSV=CSV, FILL_VALUE=FILL_VALUE)
+		DATES=DATES, CSV=CSV, SIGMA=SIGMA, FILL_VALUE=FILL_VALUE)
 
 #-- run main program
 if __name__ == '__main__':

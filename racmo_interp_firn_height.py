@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 u"""
 racmo_interp_firn_height.py
-Written by Tyler Sutterley (08/2019)
+Written by Tyler Sutterley (10/2019)
 Interpolates and extrapolates firn heights to times and coordinates
 
 CALLING SEQUENCE:
@@ -19,6 +19,7 @@ COMMAND LINE OPTIONS:
 	--coordinate=X: Polar Stereographic X and Y of point
 	--date=X: Date to interpolate in year-decimal format
 	--csv=X: Read dates and coordinates from a csv file
+	--sigma=X: Standard deviation for Gaussian kernel
 	--fill-value: Replace invalid values with fill value
 		(default uses original fill values from data file)
 
@@ -34,6 +35,7 @@ PYTHON DEPENDENCIES:
 		https://pypi.org/project/pyproj/
 
 UPDATE HISTORY:
+	Updated 10/2019: Gaussian average firn fields before interpolation
 	Updated 08/2019: convert to model coordinates (rotated pole lat/lon)
 		and interpolate using N-dimensional functions
 		added rotation parameters for Antarctic models (XANT27,ASE055,XPEN055)
@@ -50,6 +52,7 @@ import getopt
 import netCDF4
 import numpy as np
 import scipy.spatial
+import scipy.ndimage
 import scipy.interpolate
 
 #-- PURPOSE: set the projection parameters based on the firn model shortname
@@ -63,8 +66,8 @@ def set_projection(FIRN_MODEL):
 	return projection_flag
 
 #-- PURPOSE: read and interpolate RACMO2.3 firn corrections
-def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-	VARIABLE='zs', FILL_VALUE=None):
+def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y, VARIABLE='zs',
+	SIGMA=1.5, FILL_VALUE=None):
 
 	#-- set parameters based on input model
 	FIRN_FILE = {}
@@ -138,8 +141,30 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 	#-- indices of specified ice mask
 	i,j = np.nonzero(fd[VARIABLE][0,:,:] != fv)
 	#-- create mask object for interpolating data
-	fd['mask'] = np.ones((ny,nx),dtype=np.bool)
-	fd['mask'][i,j] = False
+	fd['mask'] = np.zeros((ny,nx))
+	fd['mask'][i,j] = 1.0
+
+	#-- use a gaussian filter to smooth mask
+	gs = {}
+	gs['mask'] = scipy.ndimage.gaussian_filter(fd['mask'], SIGMA,
+		mode='constant', cval=0)
+	#-- indices of smoothed ice mask
+	ii,jj = np.nonzero(np.ceil(gs['mask']) == 1.0)
+	#-- use a gaussian filter to smooth each firn field
+	gs[VARIABLE] = np.ma.zeros((nt,ny,nx), fill_value=fv)
+	gs[VARIABLE].mask = (gs['mask'] == 0.0)
+	for t in range(nt):
+		#-- replace fill values before smoothing data
+		temp1 = np.zeros((ny,nx))
+		#-- reference to first firn field
+		temp1[i,j] = fd[VARIABLE][t,i,j] - fd[VARIABLE][0,i,j]
+		#-- smooth firn field
+		temp2 = scipy.ndimage.gaussian_filter(temp1, SIGMA,
+			mode='constant', cval=0)
+		#-- scale output smoothed firn field
+		gs[VARIABLE][t,ii,jj] = temp2[ii,jj]/gs['mask'][ii,jj]
+		#-- replace valid firn values with original
+		gs[VARIABLE][t,i,j] = temp1[i,j]
 
 	#-- rotated pole longitude and latitude of input model (model coordinates)
 	xg,yg = rotate_coordinates(fd['lon'], fd['lat'], rot_lon, rot_lat)
@@ -156,8 +181,8 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 	#-- calculate rotated pole coordinates of input coordinates
 	ix,iy = rotate_coordinates(ilon, ilat, rot_lon, rot_lat)
 
-	#-- check that input points are within convex hull of valid model points
-	points = np.concatenate((xg[i,j,None],yg[i,j,None]),axis=1)
+	#-- check that input points are within convex hull of smoothed model points
+	points = np.concatenate((xg[ii,jj,None],yg[ii,jj,None]),axis=1)
 	triangle = scipy.spatial.Delaunay(points.data, qhull_options='Qt Qbb Qc Qz')
 	interp_points = np.concatenate((ix[:,None],iy[:,None]),axis=1)
 	valid = (triangle.find_simplex(interp_points) >= 0)
@@ -176,14 +201,14 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 			(tdec <= fd['time'].max()) & valid)
 		#-- create an interpolator for firn height or air content
 		RGI = scipy.interpolate.RegularGridInterpolator(
-			(fd['time'],fd['y'],fd['x']), fd[VARIABLE])
+			(fd['time'],fd['y'],fd['x']), gs[VARIABLE])
 		#-- create an interpolator for input mask
 		MI = scipy.interpolate.RegularGridInterpolator(
-			(fd['y'],fd['x']), fd['mask'])
+			(fd['y'],fd['x']), (1.0 - gs['mask']))
 
 		#-- interpolate to points
 		interp_firn[ind] = RGI.__call__(np.c_[tdec[ind],iy[ind],ix[ind]])
-		interp_mask[ind] = MI.__call__(np.c_[iy[ind],ix[ind]])
+		interp_mask[ind] = MI.__call__(np.c_[iy[ind],ix[ind]]).astype(np.uint8)
 		#-- set interpolation type (1: interpolated)
 		interp_type[ind] = 1
 
@@ -202,15 +227,15 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		T = np.zeros((N))
 		#-- spatially interpolate mask to coordinates
 		mspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-			fd['mask'].T, kx=1, ky=1)
-		interp_mask[ind] = mspl.ev(ix[ind],iy[ind])
+			(1.0 - gs['mask'].T), kx=1, ky=1)
+		interp_mask[ind] = mspl.ev(ix[ind],iy[ind]).astype(np.uint8)
 		#-- create interpolated time series for calculating regression model
 		for k in range(N):
 			#-- time at k
 			T[k] = fd['time'][k]
 			#-- spatially interpolate firn elevation or air content
 			fspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-				fd[VARIABLE][k,:,:].T, kx=1, ky=1)
+				gs[VARIABLE][k,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
 			FIRN[:,k] = fspl.ev(ix[ind],iy[ind])
 
@@ -234,8 +259,8 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 		T = np.zeros((N))
 		#-- spatially interpolate mask to coordinates
 		mspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-			fd['mask'].T, kx=1, ky=1)
-		interp_mask[ind] = mspl.ev(ix[ind],iy[ind])
+			(1.0 - gs['mask'].T), kx=1, ky=1)
+		interp_mask[ind] = mspl.ev(ix[ind],iy[ind]).astype(np.uint8)
 		#-- create interpolated time series for calculating regression model
 		for k in range(N):
 			kk = nt - N + k
@@ -243,7 +268,7 @@ def interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
 			T[k] = fd['time'][kk]
 			#-- spatially interpolate firn elevation or air content
 			fspl = scipy.interpolate.RectBivariateSpline(fd['x'], fd['y'],
-				fd[VARIABLE][kk,:,:].T, kx=1, ky=1)
+				gs[VARIABLE][kk,:,:].T, kx=1, ky=1)
 			#-- create numpy masked array of interpolated values
 			FIRN[:,k] = fspl.ev(ix[ind],iy[ind])
 
@@ -315,7 +340,7 @@ def regress_model(t_in, d_in, t_out, ORDER=2, CYCLES=None, RELATIVE=None):
 #-- PURPOSE: interpolate RACMO firn height to a set of coordinates and times
 #-- wrapper function to extract EPSG and print to terminal
 def racmo_interp_firn_height(base_dir, MODEL, COORDINATES=None,
-	DATES=None, CSV=None, FILL_VALUE=None):
+	DATES=None, CSV=None, SIGMA=None, FILL_VALUE=None):
 
 	#-- get projection information from model shortname
 	#-- this is the projection of the coordinates being interpolated into
@@ -340,9 +365,9 @@ def racmo_interp_firn_height(base_dir, MODEL, COORDINATES=None,
 
 	#-- read and interpolate/extrapolate RACMO2.3 firn corrections
 	zs,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-		VARIABLE='zs', FILL_VALUE=FILL_VALUE)
+		VARIABLE='zs', SIGMA=SIGMA, FILL_VALUE=FILL_VALUE)
 	air,itype,fv = interpolate_racmo_firn(base_dir, EPSG, MODEL, tdec, X, Y,
-		VARIABLE='FirnAir', FILL_VALUE=FILL_VALUE)
+		VARIABLE='FirnAir', SIGMA=SIGMA, FILL_VALUE=FILL_VALUE)
 	interpolate_types = ['invalid','interpolated','backward','forward']
 	for z,a,t in zip(zs,air,itype):
 		print(z,a,interpolate_types[t])
@@ -360,13 +385,14 @@ def usage():
 	print(' --coordinate=X\tPolar Stereographic X and Y of point')
 	print(' --date=X\t\tDates to interpolate in year-decimal format')
 	print(' --csv=X\t\tRead dates and coordinates from a csv file')
+	print(' --sigma=X\t\tStandard deviation for Gaussian kernel')
 	print(' --fill-value\tReplace invalid values with fill value\n')
 
 #-- Main program that calls racmo_interp_firn_height()
 def main():
 	#-- Read the system arguments listed after the program
 	long_options = ['help','directory=','smb=','coordinate=','date=','csv=',
-		'fill-value=']
+		'sigma=','fill-value=']
 	optlist,arglist = getopt.getopt(sys.argv[1:], 'hD:S:', long_options)
 
 	#-- data directory
@@ -378,6 +404,8 @@ def main():
 	DATES = None
 	#-- read coordinates and dates from csv file
 	CSV = None
+	#-- standard deviation for gaussian kernel
+	SIGMA = 1.5
 	#-- invalid value (default is from RACMO file)
 	FILL_VALUE = None
 	#-- extract parameters
@@ -395,12 +423,14 @@ def main():
 			DATES = arg.split(',')
 		elif opt in ("--csv"):
 			CSV = os.path.expanduser(arg)
+		elif opt in ("--sigma"):
+			SIGMA = np.float(arg)
 		elif opt in ("--fill-value"):
 			FILL_VALUE = eval(arg)
 
 	#-- run program with parameters
 	racmo_interp_firn_height(base_dir, MODEL, COORDINATES=COORDINATES,
-		DATES=DATES, CSV=CSV, FILL_VALUE=FILL_VALUE)
+		DATES=DATES, CSV=CSV, SIGMA=SIGMA, FILL_VALUE=FILL_VALUE)
 
 #-- run main program
 if __name__ == '__main__':

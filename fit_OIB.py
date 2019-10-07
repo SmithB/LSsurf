@@ -298,20 +298,34 @@ def dump_geotifs(glob_str=None, fields=['dz','z0'], tif_list=None, out_dir='.', 
             D.to_geotif(out_dir+'/'+field+'_'+out_file, srs_epsg=EPSG)
     
 def calc_mass(file, out_dir, mask_file, spacing=4.e4, t_fine=None, SMB_model=None):
+    '''
+    Calculate the mass anomalies for an output grid file
     
+    inputs:
+        file: output grid file
+        out_dir: directory into which we will write the output data
+        mask_file: mask over which data will be averaged
+        spacing: distance between grid centers.  Only data within +- spacing/2 will be averaged
+        t_fine: vector of time values at which corrections will be calculated
+        SMB_model: surface-mass-balance model component averaged (input to assign_firn_correction)
+    '''
+    # read the saved data from the file
     D=mapData().from_h5(file, group='/dz/', field_mapping={'z':'dz'})
     w01=np.array([-0.5, 0.5])*spacing
+    # take the subset of data within +- spacing/2 around the grid center
     D.subset(np.mean(D.x)+w01 , np.mean(D.y)+w01)
+    # read the mask
     pad=np.array([-10000, 10000])
     mask_G=mapData().from_geotif(mask_file, bounds=[D.extent[0:2]+pad, D.extent[2:4]+pad])
     mask=mask_G.interp(D.x, D.y, gridded=True)
     mask[mask>0.9]=1
     mask[mask<=0.9]=np.NaN
-    z_SMB=np.zeros_like(D.z)
+    # make a PointData object containing the grid centers, x, y, t_fine
     m_smb_fine=np.zeros_like(t_fine)+np.NaN
     M_bar=np.zeros_like(D.t)
     xg, yg, tg =np.meshgrid(D.x, D.y, t_fine)
     D_SMB=point_data().from_dict({'x':xg.ravel(),'y':yg.ravel(),'time':tg.ravel(),'z':np.zeros_like(tg.ravel())})
+    # Calculate the firn corrections
     assign_firn_correction(D_SMB, SMB_model, 1, subset_valid=False)
     if 'smb' in D_SMB.list_of_fields:
         this_z_smb = D_SMB.smb.reshape(xg.shape)
@@ -323,34 +337,54 @@ def calc_mass(file, out_dir, mask_file, spacing=4.e4, t_fine=None, SMB_model=Non
     cell_mass[:,-1] /= 2
     cell_mass[0,:]  /= 2
     cell_mass[-1,:] /= 2
-    
+    # mask the correction values
     for t_ind in range(t_fine.size):
         this_z_smb[:,:,t_ind] *= mask
-        
+    # mask the gridded data
     for t_ind in range(D.z.shape[2]):
-        t_slice=np.abs(t_fine-D.t[t_ind])<0.5
-        z_SMB[:,:,t_ind] += np.nanmean(this_z_smb[:,:,t_slice], axis=2)
         D.z[:,:,t_ind] *= mask
         M_bar[t_ind]=np.nansum(np.nansum(D.z[:,:,t_ind]*cell_mass, axis=0))
-        
+    
+    # weight the smb grid by the cell mass
+    m_smb=np.zeros_like(this_z_smb)
     for t_ind in range(t_fine.size):
-        this_z_smb[:,:,t_ind] *= cell_mass   
-        
-    m_smb_fine = np.nansum(np.nansum(this_z_smb, axis=0), axis=0).ravel()
+        m_smb[:,:,t_ind] *= cell_mass   
+    
+    #add up m_smb over the grid
+    m_smb_fine = np.nansum(np.nansum(m_smb, axis=0), axis=0).ravel()
+
+    # interpolate m_bar to the fine time resolution
     m_alt_fine=np.interp(t_fine, D.t, M_bar)
     out_file=out_dir+'/'+os.path.basename(file)
     if os.path.isfile(out_file):
         os.remove(out_file)
     with h5py.File(out_file,'w') as h5f:
+        h5f.create_dataset('/mass/x', data=np.mean(D.x))
+        h5f.create_dataset('/mass/y', data=np.mean(D.y))
+        h5f.create_dataset('/mass/m_altimetry', data=m_alt_fine)
+        h5f.create_dataset('/mass/t', data=t_fine)
+        h5f.create_dataset('/mass/m_SMB', data=m_smb_fine)
+    return D, mask, t_fine, this_z_smb
+    
+def average_anomalies(D, out_file, mask, t_fine, z_smb_fine):
+    '''
+    Interpolate the SMB and fac anomalies to the grid points, calculate temporal averages to dealias the time series
+    '''
+    z_SMB=np.zeros_like(D.z)
+
+    for t_ind in range(D.z.shape[2]):
+        t_slice=np.abs(t_fine-D.t[t_ind])<0.5
+        z_SMB[:,:,t_ind] += np.nanmean(z_SMB[:,:,t_slice], axis=2)
+        D.z[:,:,t_ind] *= mask
+    with h5py.File(out_file,'w') as h5f:
         h5f.create_dataset('/altimetry/x', data=D.x)
         h5f.create_dataset('/altimetry/y', data=D.y)
         h5f.create_dataset('/altimetry/t', data=D.t)
         h5f.create_dataset('/altimetry/z', data=D.z)
-        h5f.create_dataset('/mass/m_altimetry', data=m_alt_fine)
         h5f.create_dataset('/altimetry/z_SMB', data=z_SMB)
-        h5f.create_dataset('/mass/t', data=t_fine)
-        h5f.create_dataset('/mass/m_SMB', data=m_smb_fine)
     
+    
+
 
 def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'dz':5.e2, 'dt':0.5},  \
             hemisphere=1, reference_epoch=None, reread_dirs=None, max_iterations=5, N_subset=8, Edit_only=False, \

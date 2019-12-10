@@ -11,13 +11,14 @@ import matplotlib.pyplot as plt
 from PointDatabase.mapData import mapData
 from PointDatabase.point_data import point_data
 import scipy.stats as sps
+import glob
 import os
 
 def tile_map(file=None, xy0=[], thedir='.', delta_x=4.e4, t_slice=[0, -1]):
     hax={}
     if file is None:
         xyr=np.round(np.array(xy0)/delta_x)*delta_x
-        file='%s/E%d_N%d.h5' % (thedir, xyr[0]/1000, xyr[1]/1000)
+        file=glob.glob('%s/E%d_N%d.h5' % (thedir, xyr[0]/1000, xyr[1]/1000))[0]
         print("file= %s" % file)
         if not os.path.isfile(file):
             print("%s not found"%file)

@@ -331,7 +331,7 @@ class lin_op:
             return np.ones_like(self.ind0, dtype=float)
         if len(self.grid.shape) > len(self.grid.mask.shape):
             temp=np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
-            subs=[temp[ii] for ii in range(len(self.grid.mask.shape))]
+            subs=tuple([temp[ii] for ii in range(len(self.grid.mask.shape))])
         else:
             inds=self.ind0-self.grid.col_0
             subs=np.unravel_index(inds, self.grid.mask.shape)

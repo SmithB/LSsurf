@@ -43,11 +43,12 @@ def edit_data_by_subset_fit(N_subset, args):
             continue
         sub_args=copy.deepcopy(args)
         sub_args['N_subset']=None
-        sub_args['data']=sub_args['data'].subset(in_bounds)
+        sub_args['data']=sub_args['data'][in_bounds]
         sub_args['W_ctr']=W_subset['x']
         sub_args['W'].update(W_subset)
         sub_args['ctr'].update({'x':x0, 'y':y0})
         sub_args['VERBOSE']=False
+        sub_args['compute_E']=False
         if 'subset_iterations' in args:
             sub_args['max_iterations']=args['subset_iterations']
         #tic=time()
@@ -98,7 +99,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
     Assign a value to each data point that determines which biases are applied to it.
 
     parameters:
-        data: pointdata instance
+        data: pointCollection.data instance
         bias_parameters: a list of parameters, each unique combination of which defines a different bias
         bias_name: a name for the biases
         key_name: an optional parameter which will be used as the dataset name, otherwise a key will be built from the parameter values
@@ -291,10 +292,10 @@ def smooth_xyt_fit(**kwargs):
 
     if args['N_subset'] is not None:
         tic=time()
-        valid_data=edit_data_by_subset_fit(args['N_subset'], args)
+        valid_data &= edit_data_by_subset_fit(args['N_subset'], args)
         timing['edit_by_subset']=time()-tic
         if args['Edit_only']:
-            return {'timing':timing, 'data':args['data'].copy().subset(valid_data)}
+            return {'timing':timing, 'data':args['data'].copy()[valid_data]}
     m={}
     E={}
     R={}
@@ -304,9 +305,12 @@ def smooth_xyt_fit(**kwargs):
     tic=time()
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
-    grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2), name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
+    grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
+         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
-        [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], col_0=grids['z0'].N_nodes, name='dz', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
+        [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
+         name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
+        mask_file=args['mask_file'])
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
@@ -322,13 +326,13 @@ def smooth_xyt_fit(**kwargs):
     if args['repeat_res'] is not None:
         N_before_repeat=np.sum(valid_data)   
         valid_data[valid_data]=valid_data[valid_data] & \
-            select_repeat_data(args['data'].copy().subset(valid_data), grids, args['repeat_dt'], args['repeat_res'], reference_time=grids['t'].ctrs[0][args['reference_epoch']])
+            select_repeat_data(args['data'].copy_subset(valid_data), grids, args['repeat_dt'], args['repeat_res'], reference_time=grids['t'].ctrs[0][args['reference_epoch']])
         if args['VERBOSE']:
             print("before repeat editing found %d data" % N_before_repeat)
             print("after repeat editing found %d data" % valid_data.sum())
 
     # subset the data based on the valid mask
-    data=args['data'].copy().subset(valid_data)
+    data=args['data'].copy_subset(valid_data)
 
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
@@ -360,7 +364,9 @@ def smooth_xyt_fit(**kwargs):
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
         data, bias_model=assign_bias_ID(data, args['bias_params'])
-        G_bias, Gc_bias, Cvals_bias, bias_model=param_bias_matrix(data, bias_model, bias_param_name='bias_ID', col_0=grids['dz'].col_N)
+        G_bias, Gc_bias, Cvals_bias, bias_model=\
+            param_bias_matrix(data, bias_model, bias_param_name='bias_ID', 
+                              col_0=grids['dz'].col_N)
         G_data.add(G_bias)
         constraint_op_list.append(Gc_bias)
 
@@ -426,7 +432,7 @@ def smooth_xyt_fit(**kwargs):
 
     # initialize the book-keeping matrices for the inversion
     m0=np.zeros(Ip_c.shape[0])
-    if "three_sigma_edit" in data.list_of_fields:
+    if "three_sigma_edit" in data.fields:
         inTSE=np.flatnonzero(data.three_sigma_edit)
     else:
         inTSE=np.arange(G_data.N_eq, dtype=int)

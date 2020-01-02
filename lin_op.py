@@ -30,6 +30,7 @@ class lin_op:
         self.ind0=np.zeros([0], dtype=int)
         self.TOC={'rows':dict(),'cols':dict()}
         self.grid=grid
+        self.expected=None
 
     def diff_op(self, delta_subs, vals,  which_nodes=None):
         # build an operator that calculates linear combination of the surrounding

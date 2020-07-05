@@ -6,7 +6,7 @@ Created on Wed Jan 30 20:12:44 2019
 @author: ben
 """
 
-def matlabToYear(t):
+def matlab_to_year(t):
     # approximate conversion of matlab date to year.  Uses the matlab conversion
     # datestr('jan 1 2000') -> 730486
 

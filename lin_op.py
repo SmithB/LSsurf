@@ -31,6 +31,12 @@ class lin_op:
         self.TOC={'rows':dict(),'cols':dict()}
         self.grid=grid
         self.expected=None
+        self.shape=None
+        self.size=None
+
+    def __update_size_and_shape__(self):
+        self.shape = (self.N_eq, self.col_N)
+
 
     def diff_op(self, delta_subs, vals,  which_nodes=None):
         # build an operator that calculates linear combination of the surrounding
@@ -64,6 +70,7 @@ class lin_op:
         self.ind0=self.grid.global_ind(sub0s).ravel()
         self.TOC['rows']={self.name:range(self.N_eq)}
         self.TOC['cols']={self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
+        self.__update_size_and_shape__()
         return self
 
     def add(self, op):
@@ -92,6 +99,7 @@ class lin_op:
         for key in op.TOC['cols'].keys():
             self.TOC['cols'][key]=op.TOC['cols'][key]
         self.col_N=np.maximum(self.col_N, op.col_N)
+        self.__update_size_and_shape__()
         return self
 
     def interp_mtx(self, pts):
@@ -139,6 +147,7 @@ class lin_op:
         # report the table of contents
         self.TOC['rows']={self.name:np.arange(self.N_eq, dtype='int')}
         self.TOC['cols']={self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
+        self.__update_size_and_shape__()
         return self
 
     def grad(self, DOF='z'):
@@ -146,6 +155,7 @@ class lin_op:
         dzdx=lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), coeffs)
         dzdy=lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), coeffs)
         self.vstack((dzdx, dzdy))
+        self.__update_size_and_shape__()
         return self
 
     def grad_dzdt(self, DOF='z', t_lag=1):
@@ -153,6 +163,7 @@ class lin_op:
         d2zdxdt=lin_op(self.grid, name='d2'+DOF+'_dxdt').diff_op(([ 0, 0,  0, 0], [-1, 0, -1, 0], [-t_lag, -t_lag, 0, 0]), coeffs)
         d2zdydt=lin_op(self.grid, name='d2'+DOF+'_dydt').diff_op(([-1, 0, -1, 0], [ 0, 0,  0, 0], [-t_lag, -t_lag, 0, 0]), coeffs)
         self.vstack((d2zdxdt, d2zdydt))
+        self.__update_size_and_shape__()
         return self
 
     def diff(self, lag=1, dim=0):
@@ -160,16 +171,19 @@ class lin_op:
         deltas=[[0, 0] for this_dim in range(self.grid.N_dims)]
         deltas[dim]=[0, lag]
         self.diff_op((deltas), coeffs)
+        self.__update_size_and_shape__()
         return self
 
     def dzdt(self, lag=1, DOF='dz'):
         coeffs=np.array([-1., 1.])/(lag*self.grid.delta[2])
         self.diff_op(([0, 0], [0, 0], [0, lag]), coeffs)
+        self.__update_size_and_shape__()
         return self
 
     def d2z_dt2(self, DOF='dz', t_lag=1):
         coeffs=np.array([-1, 2, -1])/((t_lag*self.grid.delta[2])**2)
         self=lin_op(self.grid, name='d2'+DOF+'_dt2').diff_op(([0,0,0], [0,0,0], [-t_lag, 0, t_lag]), coeffs)
+        self.__update_size_and_shape__()
         return self
 
     def grad2(self, DOF='z'):
@@ -178,6 +192,7 @@ class lin_op:
         d2zdy2=lin_op(self.grid, name='d2'+DOF+'_dy2').diff_op(([-1, 0, 1],[0, 0, 0]), coeffs)
         d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]**2))
         self.vstack((d2zdx2, d2zdy2, d2zdxdy))
+        self.__update_size_and_shape__()
         return self
 
     def grad2_dzdt(self, DOF='z', t_lag=1):
@@ -187,6 +202,7 @@ class lin_op:
         coeffs=np.array([-1., 1., 1., -1., 1., -1., -1., 1.])/(self.grid.delta[0]**2*self.grid.delta[2])
         d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-t_lag, -t_lag, -t_lag, -t_lag, 0, 0, 0, 0]),  coeffs)
         self.vstack((d3zdx2dt, d3zdy2dt, d3zdxdydt))
+        self.__update_size_and_shape__()
         return self
 
     def mean_of_bounds(self, bds, mask=None):
@@ -210,6 +226,7 @@ class lin_op:
         self.TOC['rows']={self.name:self.r}
         self.TOC['cols']={self.name:self.c}
         self.N_eq=1.
+        self.__update_size_and_shape__()
         return self
 
     def data_bias(self, ind, val=None, col=None):
@@ -229,6 +246,7 @@ class lin_op:
         self.TOC['rows']={self.name:np.unique(self.r)}
         self.TOC['cols']={self.name:np.unique(self.c)}
         self.N_eq=np.max(ind)+1
+        self.__update_size_and_shape__()
         return self
 
     def grid_prod(self, m):
@@ -313,6 +331,7 @@ class lin_op:
         self.ind0=np.concatenate([op.ind0 for op in ops])
         if self.name is not None and len(self.name) >0:
             self.TOC['rows'][self.name]=np.arange(0, last_row)
+        self.__update_size_and_shape__()
         return self
 
     def mask_for_ind0(self, mask_scale=None):
@@ -361,5 +380,5 @@ class lin_op:
         if col_N is None:
             col_N=self.col_N
         self.fix_dtypes()
-        good=self.v.ravel()!=0
+        good=self.v.ravel() != 0
         return sp.csr_matrix((self.v.ravel()[good],(self.r.ravel()[good], self.c.ravel()[good])), shape=(np.max(self.r.ravel()[good])+1, col_N))

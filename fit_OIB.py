@@ -463,7 +463,7 @@ def fit_OIB(xy0, Wxy=4e4, E_RMS={}, t_span=[2003, 2020], spacing={'z0':2.5e2, 'd
     print("for DEMs, found %d data" % np.sum(np.in1d(data.sensor, np.array(vals))==0))
 
     # run the fit    
-    S=smooth_xyt_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
+    S=smooth_xytb_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS0,
                      reference_epoch=reference_epoch, N_subset=N_subset, compute_E=compute_E,
                      bias_params=['day','sensor'], repeat_res=repeat_res, max_iterations=max_iterations, 
                      srs_proj4=SRS_proj4, VERBOSE=True, Edit_only=Edit_only, data_slope_sensors=DEM_sensors, 

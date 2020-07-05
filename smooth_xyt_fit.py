@@ -287,7 +287,7 @@ def smooth_xyt_fit(**kwargs):
     for field in required_fields:
         if field not in kwargs:
             raise ValueError("%s must be defined", field)
-    valid_data = np.isfinite(args['data'].z) #np.ones_like(args['data'].x, dtype=bool)
+    valid_data = np.isfinite(args['data'].z) & np.isfinite(args['data'].sigma)
     timing=dict()
 
     if args['N_subset'] is not None:

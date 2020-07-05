@@ -12,7 +12,7 @@ from LSsurf.racmo_extrap_firn_height import extrapolate_racmo_firn
 from LSsurf.racmo_interp_downscaled import interpolate_racmo_downscaled
 from LSsurf.racmo_extrap_downscaled import extrapolate_racmo_downscaled
 
-from LSsurf.interp_MAR_firn import interp_MAR_firn
+#from LSsurf.interp_MAR_firn import interp_MAR_firn
 
 def assign_firn_correction(data, firn_correction, hemisphere, subset_valid=True):
     # if we're rereading data, it already has the firn correction applied

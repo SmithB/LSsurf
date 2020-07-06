@@ -19,7 +19,7 @@ from LSsurf.unique_by_rows import unique_by_rows
 import os
 import h5py
 import json
-import LSsurf.op_structure_checks as checks
+#import LSsurf.op_structure_checks as checks
 import pointCollection as pc
 #import scipy.sparse.linalg as spl
 #from spsolve_tr_upper import spsolve_tr_upper

@@ -11,7 +11,7 @@ from LSsurf.matlab_to_year import matlab_to_year
 #from LSsurf.op_structure_checks import op_structure_checks
 #from LSsurf.plt_OIB_fits import plt_OIB_fits
 #from LSsurf.read_ICESat2 import read_ICESat2
-from LSsurf.reread_data_from_fits import reread_data_from_fits
+#from LSsurf.reread_data_from_fits import reread_data_from_fits
 from LSsurf.smooth_xyt_fit import smooth_xyt_fit
 from LSsurf.smooth_xytb_fit import smooth_xytb_fit
 from LSsurf.subset_DEM_stack import subset_DEM_stack

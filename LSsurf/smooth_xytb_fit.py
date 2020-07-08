@@ -71,8 +71,8 @@ def edit_data_by_subset_fit(N_subset, args):
 
 def setup_grids(args):
     '''
-    setup the grids for the problem.  
-    
+    setup the grids for the problem.
+
     From left to right, the grids are z0, then dz
     '''
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
@@ -106,7 +106,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
         bias_parameters: a list of parameters, each unique combination of which
           defines a different bias
         bias_name: a name for the biases
-        key_name: an optional parameter which will be used as the dataset name, 
+        key_name: an optional parameter which will be used as the dataset name,
           otherwise a key will be built from the parameter values
         bias_model: a dict containing entries:
             E_bias: a dict of expected bias values for the each biasID, determined from the sigma_corr parameter of the data
@@ -129,7 +129,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
         else:
             data_filt=data
         temp=np.column_stack([getattr(data_filt, bp) for bp in bias_params])
-            
+
         u_p, i_p=unique_by_rows(temp, return_index=True)
         bias_model['bias_param_dict'].update({param:list() for param in bias_params})
         bias_model['bias_param_dict'].update({'ID':list()})
@@ -150,7 +150,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
     data.assign({bias_name:bias_ID})
     return data, bias_model
 
-def setup_bias_fit(data, bias_model, G_data, constraint_op_list, 
+def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
                        bias_param_name='data_bias', op_name='data_bias'):
     """
         Setup a set of parameters representing the biases of a set of data
@@ -201,7 +201,7 @@ def build_reference_epoch_matrix(G_data, Gc, grids, args):
 def setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args):
     '''
     set up a matrix to fit a smooth POCA-vs-Swath bias
-    '''   
+    '''
     grids['PS_bias']=fd_grid( [bds['y'], bds['x']], \
        [args['spacing']['dz'], args['spacing']['dz']],\
        name='PS_bias', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'], \
@@ -223,7 +223,7 @@ def setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args):
     #    np.sqrt(np.prod(grids['dz'].delta[0:2]))
     #Build a constraint matrix for the magnitude of the PS bias
     mag_ps=lin_op(grids['PS_bias'], name='mag_ps').data_bias(\
-                ind=np.arange(grids['PS_bias'].N_nodes),                                             
+                ind=np.arange(grids['PS_bias'].N_nodes),
                 col=np.arange(grids['PS_bias'].col_0, grids['PS_bias'].col_N))
     mag_ps.expected=args['E_RMS_PS_bias']+np.zeros(mag_ps.N_eq)
     constraint_op_list.append(grad2_ps)
@@ -282,15 +282,15 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args):
         if args['VERBOSE']:
             print("starting qr solve for iteration %d at %s" % (iteration, ctime()), flush=True)
         # solve the equations
-        tic=time(); 
-        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))); 
+        tic=time();
+        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs))));
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
         rs_data=(data.z-G_data.toCSR().dot(m0))/data.sigma
         # calculate the robust standard deviation of the scaled residuals for the selected data
         sigma_hat=RDE(rs_data[in_TSE])
-        
+
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
 
@@ -316,12 +316,12 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args):
             if in_TSE.size == in_TSE_last.size and np.all( in_TSE_last == in_TSE ):
                 if args['VERBOSE']:
                     print("filtering unchanged, exiting after iteration %d" % iteration)
-                break 
+                break
         if iteration >= 2:
             if sigma_hat <= 1:
                 if args['VERBOSE']:
                     print("sigma_hat LT 1, exiting after iteration %d" % iteration)
-                break  
+                break
     return m0, sigma_hat, in_TSE, in_TSE_last, rs_data
 
 def parse_biases(m, bias_model, bias_params):
@@ -367,7 +367,7 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
     tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
-    
+
     # generate the full E vector.  E0 appears to be an ndarray,
     E0=np.array(Ip_c.dot(E0)).ravel()
     E['z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
@@ -387,8 +387,8 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_
         this_name='dzdt_bar_lag%d' % lag
         this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR().dot(G_dzbar)
         E[this_name]=np.sqrt((this_op.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-         
-    # generate the grid-mean error for zero lag  
+
+    # generate the grid-mean error for zero lag
     E['dz_bar']=np.sqrt((G_dzbar.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
     if len(bias_model.keys()) >0:
         E['bias'], E['slope_bias']=parse_biases(E0, bias_model, bias_params)
@@ -410,7 +410,7 @@ def parse_model(m, m0, data, R, RMS, G_data, G_dzbar, Gc, Ec, grids, bias_model,
         if lag < grids['dz'].shape[2]:
             this_name='dzdt_lag%d' % lag
             m['dz'].assign({this_name:lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt(lag=lag).grid_prod(m0)})
-    
+
     # calculate the grid mean of dz
     m['dz_bar']=G_dzbar.dot(m0)
 
@@ -506,13 +506,15 @@ def smooth_xytb_fit(**kwargs):
     tic=time()
     # define the grids
     grids, bds = setup_grids(args)
-    
+
     # select only the data points that are within the grid bounds
     valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
     valid_dz=grids['dz'].validate_pts((args['data'].coords()))
     valid_data=valid_data & valid_dz & valid_z0
-    
+
     if not np.any(valid_data):
+        if args['VERBOSE']:
+            print("smooth_xytb_fit: no valid data")
         return {'m':m, 'E':E, 'data':None, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # subset the data based on the valid mask
@@ -534,7 +536,7 @@ def smooth_xytb_fit(**kwargs):
     # define the smoothness constraints
     constraint_op_list=[]
     setup_smoothness_constraints(grids, constraint_op_list, args)
-    
+
     if args['E_RMS_d2x_PS_bias'] is not None:
         setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
 
@@ -542,7 +544,7 @@ def smooth_xytb_fit(**kwargs):
     if args['bias_params'] is not None:
         data, bias_model = assign_bias_ID(data, args['bias_params'], \
                                           bias_filter=args['bias_filter'])
-        setup_bias_fit(data, bias_model, G_data, constraint_op_list, 
+        setup_bias_fit(data, bias_model, G_data, constraint_op_list,
                        bias_param_name='bias_ID')
     else:
         bias_model={}
@@ -568,7 +570,7 @@ def smooth_xytb_fit(**kwargs):
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
         Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
     Ed=data.sigma.ravel()
-    
+
     #print({op.name:[Ec[Gc.TOC['rows'][op.name]].min(),  Ec[Gc.TOC['rows'][op.name]].max()] for op in constraint_op_list})
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))
@@ -579,7 +581,7 @@ def smooth_xytb_fit(**kwargs):
 
     # put the fit and constraint matrices together
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
-     
+
     # build a matrix that takes the average of the center of the delta-z grid
     # this gets used both in the averaging and error-calculation codes
     XR=np.mean(grids['z0'].bds[0])+np.array([-1., 1.])*args['W_ctr']/2.
@@ -590,7 +592,7 @@ def smooth_xytb_fit(**kwargs):
 
     # define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution:
     Ip_c = build_reference_epoch_matrix(G_data, Gc, grids, args)
- 
+
     # eliminate the columns for the model variables that are set to zero
     Gcoo=Gcoo.dot(Ip_c)
     timing['setup']=time()-tic
@@ -609,7 +611,7 @@ def smooth_xytb_fit(**kwargs):
         tic_iteration=time()
         m0, sigma_hat, in_TSE, in_TSE_last, rs_data=iterate_fit(data, Gcoo, rhs, \
                                 TCinv, G_data, Gc, in_TSE, Ip_c, timing, args)
-    
+
 
         timing['iteration']=time()-tic_iteration
         in_TSE=in_TSE_last
@@ -663,8 +665,8 @@ def main():
 
 
     print("Need test code here")
-    
 
-    
+
+
 if __name__=='__main__':
     main()

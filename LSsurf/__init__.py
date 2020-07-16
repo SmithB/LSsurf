@@ -14,7 +14,7 @@ from LSsurf.matlab_to_year import matlab_to_year
 #from LSsurf.reread_data_from_fits import reread_data_from_fits
 from LSsurf.smooth_xyt_fit import smooth_xyt_fit
 from LSsurf.smooth_xytb_fit import smooth_xytb_fit
-from LSsurf.subset_DEM_stack import subset_DEM_stack
+#from LSsurf.subset_DEM_stack import subset_DEM_stack
 from LSsurf.tile_map import tile_map
 #from LSsurf.two_mission_dhdt import two_mission_dhdt
 from LSsurf.unique_by_rows import unique_by_rows

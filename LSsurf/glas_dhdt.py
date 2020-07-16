@@ -19,7 +19,7 @@ import scipy.sparse as sp
 from time import time
 
 
-def glas_fit(xy0=np.array((-150000, -2000000)), W0, D=None, E_RMS=None, gI=None, giFile='/Data/glas/GL/rel_634/GeoIndex.h5'):
+def glas_fit(xy0, W0, D=None, E_RMS=None, gI=None, giFile='/Data/glas/GL/rel_634/GeoIndex.h5'):
     if gI is None:
         gI=geo_index().from_file(giFile)
 

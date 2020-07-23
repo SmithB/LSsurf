@@ -1,0 +1,17 @@
+name: LSsurf
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.6
+  - suitesparse
+  - notebook
+  - cython
+  - numpy
+  - scipy
+  - h5py
+  - gdal
+  - matplotlib
+  - pip
+  - pip:
+     - git+https://github.com/SmithB/PySPQR.git
+     - git+https://github.com/SmithB/pointCollection.git

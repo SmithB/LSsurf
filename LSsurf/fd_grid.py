@@ -6,9 +6,10 @@ Created on Mon Dec  4 14:07:39 2017
 """
 #import scipy.sparse as sp
 import numpy as np
-from osgeo import gdal, osr 
+from osgeo import gdal, osr
+import copy
 
-class fd_grid: 
+class fd_grid(object):
     # a fd_grid is an object that defines the nodal locations and their indices
     # for a regular grid of points. In a k-dimensional grid, each node has k
     # subscripts, and one global index.  The global index gives the index into
@@ -34,7 +35,10 @@ class fd_grid:
         if self.mask_file is not None:
             self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
             self.mask=np.round(self.mask).astype(np.int)
-        
+
+    def copy(self):
+        return copy.deepcopy(self)
+
     def validate_pts(self, pts):
         # check if each point is inside the grid
         good=np.isfinite(pts[0])

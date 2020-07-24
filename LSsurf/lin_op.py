@@ -6,6 +6,8 @@ Created on Tue Dec  5 09:25:46 2017
 """
 import numpy as np
 import scipy.sparse as sp
+from LSsurf.fd_grid import fd_grid
+
 
 class lin_op:
     def __init__(self, grid=None, row_0=0, col_N=None, col_0=None, name=None):
@@ -30,6 +32,8 @@ class lin_op:
         self.ind0=np.zeros([0], dtype=int)
         self.TOC={'rows':dict(),'cols':dict()}
         self.grid=grid
+        self.dst_grid=None
+        self.dst_ind0=None
         self.expected=None
         self.shape=None
         self.size=None
@@ -178,6 +182,9 @@ class lin_op:
         coeffs=np.array([-1., 1.])/(lag*self.grid.delta[2])
         self.diff_op(([0, 0], [0, 0], [0, lag]), coeffs)
         self.__update_size_and_shape__()
+        self.dst_grid=self.grid.copy()
+        self.dst_grid.ctrs[2] = self.grid.ctrs[2][0:-lag]+0.5*lag*self.grid.delta[2]
+        self.dst_grid.bds[2] += 0.5*lag*self.grid.delta[2]
         return self
 
     def d2z_dt2(self, DOF='dz', t_lag=1):
@@ -229,6 +236,47 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
+    def sum_to_grid3(self, kernel_size, lag=None, sub0s=None):
+        # make an operator that adds values with a kernel of size kernel_size pixels
+        # centered on the grid cells identified in sub0s
+        # optional: specify 'lag' to comput a dz/dt
+        if sub0s is None:
+            sub0s = np.meshgrid(*[np.arange(kernel_size[ii]/2, self.grid.dims[ii]) for ii in range(len(self.grid.dims))])
+        ind0 = self.grid.global_ind(sub0s)
+        half_kernel=np.floor(kernel_size/2)
+        if np.mod(kernel_size[0]/2,1)==0:
+            # even case
+            di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]),\
+                             np.arange(-half_kernel[1], half_kernel[1]))
+            grid_shift=[-self.grid.delta[0]/2, -self.grid.delta[1]/2, 0]
+        else:
+            # odd_case
+            di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]+1),\
+                             np.arange(-half_kernel[1], half_kernel[1]+1))
+            grid_shift=[0, 0, 0]
+        if lag is None:
+            delta_subs=[di.ravel(), dj.ravel(), np.zeros_like(di.ravel())]
+            wt=np.ones_like(delta_subs[0], dtype=float)
+        else:
+            delta_subs=[
+                np.concatenate([di.ravel(), di.ravel()]),
+                np.concatenate([dj.ravel(), dj.ravel()]),
+                np.concatenate([np.zeros_like(di.ravel(), dtype=int), np.zeros_like(di.ravel(), dtype=int)+lag])]
+            wt = np.concatenate([np.zeros_like(di.ravel())-1, np.zeros_like(di.ravel())])/(lag*self.grid.delta[2])
+        self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0 )
+        rcv0 = np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
+        # make a destination grid that spans the output data
+        # the grid centers are shifted by half a self.grid cell in x and y
+
+        self.dst_grid = fd_grid(\
+            [ [ self.grid.ctrs[ii][rcv0[ii][jj]] + grid_shift[ii] for jj in [0, -1]] for ii in [0, 1, 2] ],\
+            kernel_size*self.grid.delta, name=self.name)
+        # map the dst_ind0 value in the output grid
+        out_subs = [ ((rcv0[ii]-rcv0[ii][0])/kernel_size[ii]).astype(int) for ii in [0, 1, 2] ]
+        self.dst_ind0 = np.ravel_multi_index( out_subs, self.dst_grid.shape)
+
+        return self
+
     def data_bias(self, ind, val=None, col=None):
         # make a linear operator that returns a particular model parameter.
         # can be used to add one model parameter to a set of other parameters,
@@ -249,17 +297,35 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def grid_prod(self, m):
-        # dot the operator with a vector, map the result to the operator's grid
+    def grid_prod(self, m, grid=None):
+        # dot an operator with a vector, map the result to a grid
+        if grid is None:
+            if self.dst_grid is None:
+                grid=self.grid
+            else:
+                grid=self.dst_grid
+        if self.dst_ind0 is None:
+            ind0=self.ind0
+        else:
+            ind0=self.dst_ind0
         P=np.zeros(self.col_N)+np.NaN
-        P[self.ind0]=self.toCSR().dot(m).ravel()
-        return P[self.grid.col_0:self.grid.col_N].reshape(self.grid.shape)
+        P[ind0]=self.toCSR().dot(m).ravel()
+        return P[grid.col_0:grid.col_N].reshape(grid.shape)
 
-    def grid_error(self, Rinv):
-        # calculate the error estimate for an operator and map the result to the operator's grid
+    def grid_error(self, Rinv, grid=None):
+        # calculate the error estimate for an operator and map the result to a grid
+        if grid is None:
+            if self.dst_grid is None:
+                grid=self.grid
+            else:
+                grid=self.dst_grid
+        if self.dst_ind0 is None:
+            ind0=self.ind0
+        else:
+            ind0=self.dst_ind0
         E=np.zeros(self.col_N)+np.NaN
-        E[self.ind0]=np.sqrt((self.toCSR().dot(Rinv)).power(2).sum(axis=1)).ravel()
-        return E[self.grid.col_0:self.grid.col_N].reshape(self.grid.shape)
+        E[ind0]=np.sqrt((self.toCSR().dot(Rinv)).power(2).sum(axis=1)).ravel()
+        return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def vstack(self, ops, order=None, name=None, TOC_cols=None):
         # combine a set of operators by stacking them vertically to form
@@ -363,6 +429,30 @@ class lin_op:
             return temp2
         else:
             return temp
+
+    def apply_2d_mask(self, mask=None):
+        # multiply array elements by the values in a mask
+        # The mask must have dimensions equal to the first two dimensions of
+        # self.grid
+        # if no mask is specified, use self.grid.mask
+        if mask is None:
+            mask=self.grid.mask
+        csr=self.toCSR()
+
+        for row in range(csr.shape[0]):
+            # get the indices of the nonzero entries for the row
+            inds=csr[row,:].nonzero()[1]
+            # get the mask subscripts for the indices
+            subs=np.unravel_index(inds-self.grid.col_0, self.grid.shape)
+            # query the mask at those points
+            mask_ind=np.ravel_multi_index([subs[0], subs[1]], mask.shape)
+            # want to do: csr[row,inds] *= mask.ravel()[mask_ind]
+            # but need to add a toarray() step to avoid broadcasting rules
+            temp = csr[row, inds].toarray()
+            csr[row,inds] = temp.ravel()*mask.ravel()[mask_ind]
+        temp=csr.tocoo()
+        self.r, self.c, self.v=[temp.row, temp.col, temp.data]
+        return self
 
     def print_TOC(self):
         for rc in ('cols','rows'):

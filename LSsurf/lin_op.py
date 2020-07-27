@@ -309,7 +309,7 @@ class lin_op:
         else:
             ind0=self.dst_ind0
         P=np.zeros(self.col_N)+np.NaN
-        P[ind0]=self.toCSR().dot(m).ravel()
+        P[ind0]=self.toCSR(row_N=ind0.size).dot(m).ravel()
         return P[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def grid_error(self, Rinv, grid=None):
@@ -465,10 +465,12 @@ class lin_op:
         self.r=self.r.astype(int)
         self.c=self.c.astype(int)
 
-    def toCSR(self, col_N=None):
+    def toCSR(self, col_N=None, row_N=None):
         # transform a linear operator to a sparse CSR matrix
         if col_N is None:
             col_N=self.col_N
         self.fix_dtypes()
         good=self.v.ravel() != 0
-        return sp.csr_matrix((self.v.ravel()[good],(self.r.ravel()[good], self.c.ravel()[good])), shape=(np.max(self.r.ravel()[good])+1, col_N))
+        if row_N is None:
+            row_N=np.max(self.r.ravel()[good])+1
+        return sp.csr_matrix((self.v.ravel()[good],(self.r.ravel()[good], self.c.ravel()[good])), shape=(row_N, col_N))

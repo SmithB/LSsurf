@@ -182,9 +182,8 @@ class lin_op:
         coeffs=np.array([-1., 1.])/(lag*self.grid.delta[2])
         self.diff_op(([0, 0], [0, 0], [0, lag]), coeffs)
         self.__update_size_and_shape__()
-        self.dst_grid=self.grid.copy()
-        self.dst_grid.ctrs[2] = self.grid.ctrs[2][0:-lag]+0.5*lag*self.grid.delta[2]
-        self.dst_grid.bds[2] += 0.5*lag*self.grid.delta[2]
+        self.update_dst_grid([0, 0, 0.5*lag*self.grid.delta[2]], np.array([1, 1, 1]))
+
         return self
 
     def d2z_dt2(self, DOF='dz', t_lag=1):
@@ -257,22 +256,29 @@ class lin_op:
         if lag is None:
             delta_subs=[di.ravel(), dj.ravel(), np.zeros_like(di.ravel())]
             wt=np.ones_like(delta_subs[0], dtype=float)
+            grid_shift=[0, 0, 0]
         else:
             delta_subs=[
                 np.concatenate([di.ravel(), di.ravel()]),
                 np.concatenate([dj.ravel(), dj.ravel()]),
                 np.concatenate([np.zeros_like(di.ravel(), dtype=int), np.zeros_like(di.ravel(), dtype=int)+lag])]
             wt = np.concatenate([np.zeros_like(di.ravel())-1, np.zeros_like(di.ravel())])/(lag*self.grid.delta[2])
+            grid_shift[2] = 0.5*lag*self.grid.delta[2]
         self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0 )
+        self.update_dst_grid(grid_shift, kernel_size)
+
+        return self
+
+    def update_dst_grid(self, grid_shift, kernel_size):
         rcv0 = np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
         # make a destination grid that spans the output data
         # the grid centers are shifted by half a self.grid cell in x and y
 
         self.dst_grid = fd_grid(\
-            [ [ self.grid.ctrs[ii][rcv0[ii][jj]] + grid_shift[ii] for jj in [0, -1]] for ii in [0, 1, 2] ],\
+            [ [ self.grid.ctrs[dim][rcv0[dim][jj]] + grid_shift[dim] for jj in [0, -1]] for dim in [0, 1, 2] ],\
             kernel_size*self.grid.delta, name=self.name)
         # map the dst_ind0 value in the output grid
-        out_subs = [ ((rcv0[ii]-rcv0[ii][0])/kernel_size[ii]).astype(int) for ii in [0, 1, 2] ]
+        out_subs = [ ((rcv0[dim]-rcv0[dim][0])/kernel_size[dim]).astype(int) for dim in [0, 1, 2] ]
         self.dst_ind0 = np.ravel_multi_index( out_subs, self.dst_grid.shape)
 
         return self

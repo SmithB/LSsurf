@@ -330,7 +330,7 @@ class lin_op:
         else:
             ind0=self.dst_ind0
         E=np.zeros(self.col_N)+np.NaN
-        E[ind0]=np.sqrt((self.toCSR().dot(Rinv)).power(2).sum(axis=1)).ravel()
+        E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def vstack(self, ops, order=None, name=None, TOC_cols=None):

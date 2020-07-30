@@ -267,13 +267,13 @@ def setup_averaging_ops(grid, col_N, args):
 
         # subscripts for the centers of the averaged areas
         N_ctrs=[int(np.floor(N_grid[ii]/kernel_N[ii])) for ii in range(len(N_grid))]
-        if np.mod(np.log2(np.floor(N_ctrs[0])),1)==0:
-            # even case, want grid centers centeded on N/2
+        if N_ctrs[0] > 2 : #np.mod(np.log2(np.floor(N_ctrs[0])),2)==0:
+            # Normally want grid centers centered on kernel_N/2
             grid_ctr_subs=[np.arange(kernel_N[0]/2, grid.shape[0]-kernel_N[0]/2+1, kernel_N[0], dtype=int),
                                    np.arange(kernel_N[1]/2, grid.shape[1]-kernel_N[1]/2+1, kernel_N[1], dtype=int),
                                    np.arange(grid.shape[2], dtype=int)]
         else:
-            # odd power of 2, want grid centers centered on 0
+            # For the N_ctrs=2 grid, want the central portion of the domain (the edges will be trimmed)
             grid_ctr_subs = [np.arange(1, N_ctrs[0], dtype=int)*kernel_N[0], \
                          np.arange(1, N_ctrs[1], dtype=int)*kernel_N[1], \
                              np.arange(grid.shape[2], dtype=int)]
@@ -299,7 +299,6 @@ def setup_averaging_ops(grid, col_N, args):
         this_name='dzdt_lag'+str(lag)
         op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
         ops[this_name]=op
-
     return ops
 
 def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):

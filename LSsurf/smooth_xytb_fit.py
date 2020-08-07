@@ -278,7 +278,7 @@ def calc_cell_area(grid):
     return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
 
 def setup_averaging_ops(grid, col_N, args, cell_area=None):
-    # build matrices that take the average of of the delta-z grid at large scales.
+    # build operators that take the average of of the delta-z grid at large scales.
     # these get used both in the averaging and error-calculation codes
     N_grid=[ctrs.size for ctrs in grid.ctrs]
     ops={}
@@ -329,7 +329,8 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
             else:
                 op.v /= (kernel_N[0]*kernel_N[1])
             ops[dz_name]=op
-
+    
+    # build the not-averaged dz/dt operators (these are not masked)
     for lag in args['dzdt_lags']:
         this_name='dzdt_lag'+str(lag)
         op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
@@ -474,12 +475,15 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     m['z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
                                      'y':grids['z0'].ctrs[0],\
                                      'cell_area': grids['z0'].cell_area, \
+                                     'mask':grids['z0'].mask), \ 
                                      'z0':np.reshape(m0[G_data.TOC['cols']['z0']], grids['z0'].shape)})
     m['dz']=pc.grid.data().from_dict({'x':grids['dz'].ctrs[1],\
                                      'y':grids['dz'].ctrs[0],\
                                      'time':grids['dz'].ctrs[2],\
                                      'cell_area': grids['dz'].cell_area, \
+                                     'mask':grids['dz'].mask, \
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape)})
+
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
 

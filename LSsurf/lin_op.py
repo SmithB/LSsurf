@@ -235,14 +235,25 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def sum_to_grid3(self, kernel_size, lag=None, sub0s=None):
+    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True):
         # make an operator that adds values with a kernel of size kernel_size pixels
         # centered on the grid cells identified in sub0s
-        # optional: specify 'lag' to comput a dz/dt
+        # optional: specify 'lag' to compute a dz/dt
+        # specify taper=True to include half-weights on edge points and
+        #          quarter-weights on corner points
         if sub0s is None:
-            sub0s = np.meshgrid(*[np.arange(kernel_size[ii]/2, self.grid.dims[ii]) for ii in range(len(self.grid.dims))])
+            if taper:
+                sub0s = np.meshgrid(*[np.arange(kernel_size[ii]/2-1, self.grid.dims[ii]) for ii in range(len(self.grid.dims))])
+            else:
+                sub0s = np.meshgrid(*[np.arange(kernel_size[ii]/2, self.grid.dims[ii]) for ii in range(len(self.grid.dims))])
         ind0 = self.grid.global_ind(sub0s)
-        half_kernel=np.floor(kernel_size/2)
+
+        if taper:
+            half_kernel=np.floor((kernel_size-1)/2)
+        else:
+            half_kernel=np.floor(kernel_size/2)
+
+
         if np.mod(kernel_size[0]/2,1)==0:
             # even case
             di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]),\
@@ -253,16 +264,25 @@ class lin_op:
             di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]+1),\
                              np.arange(-half_kernel[1], half_kernel[1]+1))
             grid_shift=[0, 0, 0]
+
+        # make the weighting matrix:
+        wt0=np.ones(kernel_size[0:2], dtype=float)
+        if taper:
+            for ii in [0, -1]:
+                wt0[ii, :] /= 2
+                wt0[:, ii] /= 2
+        wt0 = wt0.ravel()
+
         if lag is None:
             delta_subs=[di.ravel(), dj.ravel(), np.zeros_like(di.ravel())]
-            wt=np.ones_like(delta_subs[0], dtype=float)
+            wt=wt0
             grid_shift=[0, 0, 0]
         else:
             delta_subs=[
                 np.concatenate([di.ravel(), di.ravel()]),
                 np.concatenate([dj.ravel(), dj.ravel()]),
                 np.concatenate([np.zeros_like(di.ravel(), dtype=int), np.zeros_like(di.ravel(), dtype=int)+lag])]
-            wt = np.concatenate([np.zeros_like(di.ravel())-1, np.zeros_like(di.ravel())])/(lag*self.grid.delta[2])
+            wt = np.concatenate([-wt0, wt0])/(lag*self.grid.delta[2])
             grid_shift[2] = 0.5*lag*self.grid.delta[2]
         self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0 )
         self.update_dst_grid(grid_shift, kernel_size)

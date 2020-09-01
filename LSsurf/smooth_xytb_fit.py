@@ -281,7 +281,7 @@ def setup_averaging_ops(grid, col_N, args):
 
         # make the operator, multiply the operator coefficients by the dz mask
         op=lin_op(grid, name=this_name, col_N=col_N)\
-            .sum_to_grid3(kernel_N, sub0s=sub0s)
+            .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True)
         op.apply_2d_mask()
         # divide the values by the kernel area
         op.v /= (kernel_N[0]*kernel_N[1])
@@ -290,7 +290,7 @@ def setup_averaging_ops(grid, col_N, args):
         for lag in args['dzdt_lags']:
             dz_name='avg_dzdt_'+str(int(scale))+'m'+'_lag'+str(lag)
             op=lin_op(grid, name=this_name, col_N=col_N)\
-                .sum_to_grid3(kernel_N, sub0s=sub0s, lag=lag)\
+                .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
                     .apply_2d_mask()
             op.v /= (kernel_N[0]*kernel_N[1])
             ops[dz_name]=op

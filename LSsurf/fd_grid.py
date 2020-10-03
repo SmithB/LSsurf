@@ -74,11 +74,21 @@ class fd_grid(object):
             idx0[dim][good]=np.floor((pts[dim][good]-self.bds[dim][0])/self.delta[dim])
         return idx0
     
-    def global_ind(self, cell_sub):
+    def global_ind(self, cell_sub, return_valid=False):
         # find the global index for a particular cell number
         cell_sub=[temp.astype(int) for temp in cell_sub]
-        ind=self.col_0+np.ravel_multi_index(cell_sub, self.shape)
-        return ind
+        dims=range(len(self.shape))
+        if return_valid:
+            # check if subscripts are in bounds before calculating indices
+            valid=np.ones_like(cell_sub[0], dtype=bool)
+            for dim in dims:
+                valid &= (cell_sub[dim]>=0) & (cell_sub[dim]<self.shape[dim])
+            ind=np.zeros_like(cell_sub[0])
+            ind[valid] = self.col_0 + np.ravel_multi_index( [cell_sub[dim][valid] for dim in dims], self.shape)
+            return ind, valid
+        else:
+            ind=self.col_0+np.ravel_multi_index(cell_sub, self.shape)
+            return ind
 
     def read_geotif(self, filename, srs_proj4=None, dataType=gdal.GDT_Float32, interp_algorithm=gdal.GRA_NearestNeighbour):
   

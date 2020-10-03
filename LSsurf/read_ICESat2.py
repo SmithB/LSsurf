@@ -6,12 +6,36 @@ Created on Tue Aug 20 15:00:05 2019
 @author: ben
 """
 import numpy as np
-from PointDatabase.check_ATL06_blacklist import check_rgt_cycle_blacklist
+from ATL11.check_ATL06_hold_list import read_files as read_hold_files
 #from PointDatabase.geo_index import geo_index
 #from PointDatabase.point_data import point_data
-from PointDatabase.ATL06_filters import segDifferenceFilter
-from PointDatabase.reconstruct_ATL06_tracks import reconstruct_ATL06_tracks
+#from PointDatabase.ATL06_filters import segDifferenceFilter
 import pointCollection as pc
+
+def segDifferenceFilter(D6, tol=2, setValid=True, toNaN=False, subset=False):
+    dAT=20.
+    if D6.h_li.shape[0] < 3:
+        mask=np.ones_like(D6.h_li, dtype=bool)
+        return mask
+    EPplus=D6.h_li + dAT*D6.dh_fit_dx
+    EPminus=D6.h_li - dAT*D6.dh_fit_dx
+    segDiff=np.zeros_like(D6.h_li)
+    if len(D6.h_li.shape)>1:
+        segDiff[0:-1,:]=np.abs(EPplus[0:-1,:]-D6.h_li[1:, :])
+        segDiff[1:,:]=np.maximum(segDiff[1:,:], np.abs(D6.h_li[0:-1,:]-EPminus[1:,:]))
+    else:
+        segDiff[0:-1]=np.abs(EPplus[0:-1]-D6.h_li[1:])
+        segDiff[1:]=np.maximum(segDiff[1:], np.abs(D6.h_li[0:-1]-EPminus[1:]))
+    mask=segDiff<tol
+    if setValid:
+        D6.valid=D6.valid & mask
+    if toNaN:
+        D6.h_li[mask==0]=np.NaN
+    if subset:
+        D6.index(np.any(mask==1, axis=1))
+
+    return mask
+
 
 def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2, blockmedian_scale=None, cplx_accept_threshold=0.):
     field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'], 
@@ -33,13 +57,14 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         return [None]
     # check the D6 filenames against the blacklist of bad files
     if tiled:
-        D0=reconstruct_ATL06_tracks(pc.data(fields=fields).from_list(D0))
-    blacklist=None
+        D0=pc.reconstruct_ATL06_tracks(pc.data(fields=fields).from_list(D0))
+    hold_list = read_hold_files()
+    hold_list = {(item[0], item[1]) for item in hold_list}
     D1=list()
     for ind, D in enumerate(D0):
         if D.size<2:
             continue
-        delete_file, blacklist=check_rgt_cycle_blacklist(rgt_cycle=[D.rgt[0], D.cycle_number[0]],  blacklist=blacklist)
+        delete_file = (D.cycle_number[0], D.rgt[0]) in hold_list
         if delete_file==0:
             D1.append(D)
 
@@ -54,7 +79,8 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
     cplx_bins=np.array(cplx_bins)
     sigma_corr=np.zeros(len(D1))
     for ind, D in enumerate(D1):
-        
+
+
         valid=segDifferenceFilter(D, setValid=False, toNaN=False, tol=seg_diff_tol)
         
         D.assign({'quality':D.atl06_quality_summary})
@@ -81,8 +107,12 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         #D.index(np.isfinite(D.h_li), list_of_fields=['x','y','z','time','year','sigma','sigma_corr','rgt','cycle'])
                 
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
-        dhdy_med=np.nanmedian(D.dh_fit_dy)
-        dhdx_med=np.nanmedian(D.dh_fit_dx)
+        if np.any(np.isfinite(D.dh_fit_dy)):
+            dhdy_med=np.nanmedian(D.dh_fit_dy)
+            dhdx_med=np.nanmedian(D.dh_fit_dx)
+        else:
+            dhdy_med=np.NaN
+            dhdx_med=np.NaN
         sigma_geo_x=8
         sigma_corr[ind]=np.sqrt(0.03**2+sigma_geo_x**2*(dhdx_med**2+dhdy_med**2))
         if ~np.isfinite(sigma_corr[ind]):

@@ -42,7 +42,7 @@ class lin_op:
         self.shape = (self.N_eq, self.col_N)
 
 
-    def diff_op(self, delta_subs, vals,  which_nodes=None):
+    def diff_op(self, delta_subs, vals,  which_nodes=None, valid_equations_only=True):
         # build an operator that calculates linear combination of the surrounding
         # values at each node of a grid.
         # A template, given by delta_subs and vals contains a list of offsets
@@ -50,13 +50,21 @@ class lin_op:
         # to each offset.  Only those nodes for which the template falls
         # entirely inside the grid are included in the operator
 
-        # compute the maximum and minimum offset in each dimension
-        max_deltas=[np.max(delta_sub) for delta_sub in delta_subs]
-        min_deltas=[np.min(delta_sub) for delta_sub in delta_subs]
+        if valid_equations_only:
+            # compute the maximum and minimum offset in each dimension.  These
+            # will be used to eliminate equations that extend outside the model
+            # domain
+            max_deltas=[np.max(delta_sub) for delta_sub in delta_subs]
+            min_deltas=[np.min(delta_sub) for delta_sub in delta_subs]
+        else:
+            # treat the maximum and minimum offset in each dimension as zero,
+            # so no equations are truncated
+            max_deltas=[0 for delta_sub in delta_subs]
+            min_deltas=[0 for delta_sub in delta_subs]
         #generate the center-node indices for each calculation
         # if in dimension k, min_delta=-a and max_delta = +b, the number of indices is N,
         # then the first valid center is a and the last is N-b
-        sub0s=np.meshgrid(*[np.arange(np.maximum(0, -min_delta), np.minimum(Ni, Ni-max_delta)) for Ni, min_delta, max_delta in zip(self.grid.shape, min_deltas, max_deltas)])
+        sub0s=np.meshgrid(*[np.arange(np.maximum(0, -min_delta), np.minimum(Ni, Ni-max_delta)) for Ni, min_delta, max_delta in zip(self.grid.shape, min_deltas, max_deltas)], indexing='ij')
         sub0s=[sub.ravel() for sub in sub0s]
         if which_nodes is not None:
             temp_mask=np.in1d(self.grid.global_ind(sub0s), which_nodes)
@@ -69,11 +77,22 @@ class lin_op:
             # build a list of subscripts over dimensions
             this_sub=[sub0+delta[ii] for sub0, delta in zip(sub0s, delta_subs)]
             self.r[:,ii]=self.row_0+np.arange(0, self.N_eq, dtype=int)
-            self.c[:,ii]=self.grid.global_ind(this_sub)
-            self.v[:,ii]=vals[ii]
-        self.ind0=self.grid.global_ind(sub0s).ravel()
-        self.TOC['rows']={self.name:range(self.N_eq)}
-        self.TOC['cols']={self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
+            if valid_equations_only:
+                self.c[:,ii]=self.grid.global_ind(this_sub)
+                self.v[:,ii]=vals[ii].ravel()
+            else:
+                # need to remove out-of-bound subscripts
+                self.c[:,ii], valid_ind=self.grid.global_ind(this_sub, return_valid=True)
+                self.v[:,ii]=vals[ii].ravel()*valid_ind.ravel()
+        #if not valid_equations_only: [Leave this commented until it causes a problem]
+        #    # remove the elements that have v=0
+        #    nonzero_v = self.v.ravel() != 0
+        #    self.r = self.r.ravel()[nonzero_v]
+        #    self.c = self.c.ravel()[nonzero_v]
+        #    self.v = self.v.ravel()[nonzero_v]
+        self.ind0 = self.grid.global_ind(sub0s).ravel()
+        self.TOC['rows'] = {self.name:range(self.N_eq)}
+        self.TOC['cols'] = {self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
         self.__update_size_and_shape__()
         return self
 
@@ -211,6 +230,19 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
+    def normalize_by_unit_product(self, wt=1):
+        # normalize an operator by its magnitude's product with a vector of ones.
+        # optionally rescale the result by a factor of wt
+        unit_op=lin_op(col_N=self.col_N)
+        unit_op.N_eq=self.N_eq
+        unit_op.r, unit_op.c, unit_op.v = [self.r, self.c, np.abs(self.v)/wt]
+        unit_op.v =np.abs(unit_op.v)/ wt
+        unit_op.__update_size_and_shape__
+        norm = unit_op.toCSR(row_N=unit_op.N_eq).dot(np.ones(self.shape[1]))
+        scale = np.zeros_like(norm)
+        scale[norm>0] = 1./norm[norm>0]
+        self.v *= scale[self.r]
+
     def mean_of_bounds(self, bds, mask=None):
         # make a linear operator that calculates the mean of all points
         # in its grid that fall within bounds specified by 'bnds',  If an
@@ -235,34 +267,37 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True):
+    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, valid_equations_only=True):
         # make an operator that adds values with a kernel of size kernel_size pixels
         # centered on the grid cells identified in sub0s
         # optional: specify 'lag' to compute a dz/dt
         # specify taper=True to include half-weights on edge points and
         #          quarter-weights on corner points
-        if sub0s is None:
-            if taper:
-                sub0s = np.meshgrid(*[np.arange(kernel_size[ii]/2-1, self.grid.dims[ii]) for ii in range(len(self.grid.dims))])
-            else:
-                sub0s = np.meshgrid(*[np.arange(kernel_size[ii]/2, self.grid.dims[ii]) for ii in range(len(self.grid.dims))])
-        ind0 = self.grid.global_ind(sub0s)
-
         if taper:
-            half_kernel=np.floor((kernel_size-1)/2)
+            half_kernel=np.floor((kernel_size-1)/2).astype(int)
         else:
-            half_kernel=np.floor(kernel_size/2)
+            half_kernel=np.floor(kernel_size/2).astype(int)
 
+        if sub0s is None:
+            dims=range(len(self.grid.shape))
+            if taper:
+                if valid_equations_only:
+                    sub0s = np.meshgrid( *[np.arange(half_kernel+1, self.grid.shape[ii], kernel_size[ii]-1, dtype=int) for ii in dims], indexing='ij')
+                else:
+                    sub0s = np.meshgrid( *[np.arange(0, self.grid.shape[ii]+1, kernel_size[ii]-1, dtype=int) for ii in dims], indexing='ij')
+            else:
+                sub0s = np.meshgrid(*[np.arange(half_kernel, self.grid.shape[ii], kernel_size[ii], dtype=int) for ii in dims], indexing='ij')
+        ind0 = self.grid.global_ind(sub0s)
 
         if np.mod(kernel_size[0]/2,1)==0:
             # even case
             di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]),\
-                             np.arange(-half_kernel[1], half_kernel[1]))
+                             np.arange(-half_kernel[1], half_kernel[1]), indexing='ij')
             grid_shift=[-self.grid.delta[0]/2, -self.grid.delta[1]/2, 0]
         else:
             # odd_case
             di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]+1),\
-                             np.arange(-half_kernel[1], half_kernel[1]+1))
+                             np.arange(-half_kernel[1], half_kernel[1]+1), indexing='ij')
             grid_shift=[0, 0, 0]
 
         # make the weighting matrix:
@@ -284,7 +319,10 @@ class lin_op:
                 np.concatenate([np.zeros_like(di.ravel(), dtype=int), np.zeros_like(di.ravel(), dtype=int)+lag])]
             wt = np.concatenate([-wt0, wt0])/(lag*self.grid.delta[2])
             grid_shift[2] = 0.5*lag*self.grid.delta[2]
-        self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0 )
+
+        self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0,\
+                     valid_equations_only=valid_equations_only )
+
         self.update_dst_grid(grid_shift, kernel_size)
 
         return self
@@ -293,12 +331,12 @@ class lin_op:
         rcv0 = np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
         # make a destination grid that spans the output data
         # the grid centers are shifted by half a self.grid cell in x and y
-
+        dims=range(len(self.grid.shape))
         self.dst_grid = fd_grid(\
-            [ [ self.grid.ctrs[dim][rcv0[dim][jj]] + grid_shift[dim] for jj in [0, -1]] for dim in [0, 1, 2] ],\
+            [ [ self.grid.ctrs[dim][rcv0[dim][jj]] + grid_shift[dim] for jj in [0, -1]] for dim in dims],\
             kernel_size*self.grid.delta, name=self.name)
         # map the dst_ind0 value in the output grid
-        out_subs = [ ((rcv0[dim]-rcv0[dim][0])/kernel_size[dim]).astype(int) for dim in [0, 1, 2] ]
+        out_subs = [ ((rcv0[dim]-rcv0[dim][0])/kernel_size[dim]).astype(int) for dim in dims ]
         self.dst_ind0 = np.ravel_multi_index( out_subs, self.dst_grid.shape)
 
         return self

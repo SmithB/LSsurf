@@ -7,20 +7,21 @@ Created on Wed Aug 21 10:33:41 2019
 """
 import numpy as np
 from LSsurf.unique_by_rows import unique_by_rows
-from PointDatabase import matlabToYear, point_data
+from LSsurf import matlab_to_year
+import pointCollection as pc
 
 def subset_DEM_stack(D0, xyc, W, bin_width=400, min_coverage_w=5e3):
     '''
     Find the minimal set of DEMS that cover a grid completely once per year.
     '''
     if isinstance(D0, list):
-        D=point_data(list_of_fields=['x','y','time','sensor','z']).from_list(D0)
-    elif isinstance(D0, point_data):
+        D=pc.data(fields=['x','y','time','sensor','z']).from_list(D0)
+    elif isinstance(D0, pc.data):
         D=D0
     else:
         raise TypeError('type of D0 not understood')
     if np.any(D.time > 1e4):
-        D.time=matlabToYear(D.time)
+        D.time=matlab_to_year(D.time)
     xy0=[xyc[0]-W/2, xyc[1]-W/2]
     N_bins=W/bin_width + 1
     row=np.round((D.y-xy0[1])/bin_width).astype(int)
@@ -78,7 +79,7 @@ def subset_DEM_stack(D0, xyc, W, bin_width=400, min_coverage_w=5e3):
 def main():
     # test code
     thefile='Volumes/ice2/ben/ATL14_test/Jako_d2zdt2=5000_d3z=0.00001_d2zdt2=1500_RACMO//centers/E480_N-1200.h5'
-    D=point_data().from_file(thefile, group='/data/')
+    D=pc.data().from_h5(thefile, group='/data/')
     D.index(D.sensor>=4)
     xy0=np.array([  480000., -1200000.])
     best_sensors=subset_DEM_stack(D, xy0, 4.e4)

@@ -33,7 +33,8 @@ def edit_data_by_subset_fit(N_subset, args):
     subset_spacing={key:W_subset[key]/2 for key in list(W_subset)}
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
 
-    subset_ctrs=np.meshgrid(np.arange(bds['x'][0]+subset_spacing['x'], bds['x'][1], subset_spacing['x']),  np.arange(bds['y'][0]+subset_spacing['y'], bds['y'][1], subset_spacing['y']))
+    subset_ctrs=np.meshgrid(np.arange(bds['x'][0]+subset_spacing['x'], bds['x'][1], subset_spacing['x']),\
+                            np.arange(bds['y'][0]+subset_spacing['y'], bds['y'][1], subset_spacing['y']))
     valid_data=np.ones_like(args['data'].x, dtype=bool)
     count=0
     for x0, y0 in zip(subset_ctrs[0].ravel(), subset_ctrs[1].ravel()):
@@ -185,7 +186,7 @@ def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
 def build_reference_epoch_matrix(G_data, Gc, grids, args):
     # define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution:
     # Find the rows and columns that match the reference epoch
-    temp_r, temp_c=np.meshgrid(np.arange(0, grids['dz'].shape[0]), np.arange(0, grids['dz'].shape[1]))
+    temp_r, temp_c=np.meshgrid(np.arange(0, grids['dz'].shape[0]), np.arange(0, grids['dz'].shape[1]), indexing='ij')
     z02_mask=grids['dz'].global_ind([temp_r.transpose().ravel(), temp_c.transpose().ravel(),\
                   args['reference_epoch']+np.zeros_like(temp_r).ravel()])
 
@@ -256,7 +257,22 @@ def setup_smoothness_constraints(grids, constraint_op_list, args):
         d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + args['E_RMS']['d2z_dt2']/root_delta_V_dz
         constraint_op_list += [d2z_dt2]
 
-def setup_averaging_ops(grid, col_N, args):
+def sum_cell_area(grid_f, grid_c, return_op=False):
+    # calculate the area of masked cells in a coarse grid within the cells of a fine grid
+    cell_area_f = calc_cell_area(grid_f)*grid_f.mask
+    n_k=(grid_c.delta[0:2]/grid_f.delta).astype(int) + 1
+    fine_to_coarse = lin_op(grid=grid_f).sum_to_grid3( n_k, taper=True, valid_equations_only=False)
+    result=fine_to_coarse.toCSR().dot(cell_area_f.ravel()).reshape(grid_c.shape[0:2])
+    if return_op:
+        return result, fine_to_coarse
+    return result
+
+def calc_cell_area(grid):
+    xg, yg = np.meshgrid(grid.ctrs[1], grid.ctrs[0])
+    lat=pc.data().from_dict({'x':xg, 'y':yg}).get_latlon(proj4_string=grid.srs_proj4).latitude
+    return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
+
+def setup_averaging_ops(grid, col_N, args, cell_area=None):
     # build matrices that take the average of of the delta-z grid at large scales.
     # these get used both in the averaging and error-calculation codes
     N_grid=[ctrs.size for ctrs in grid.ctrs]
@@ -277,22 +293,31 @@ def setup_averaging_ops(grid, col_N, args):
             grid_ctr_subs = [np.arange(1, N_ctrs[0], dtype=int)*kernel_N[0], \
                          np.arange(1, N_ctrs[1], dtype=int)*kernel_N[1], \
                              np.arange(grid.shape[2], dtype=int)]
-        sub0s = np.meshgrid(*grid_ctr_subs)
+        sub0s = np.meshgrid(*grid_ctr_subs, indexing='ij')
 
-        # make the operator, multiply the operator coefficients by the dz mask
+        # make the operator
         op=lin_op(grid, name=this_name, col_N=col_N)\
             .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True)
-        op.apply_2d_mask()
-        # divide the values by the kernel area
-        op.v /= (kernel_N[0]*kernel_N[1])
+
+        op.apply_2d_mask(mask=cell_area)
+
+        if cell_area is not None:
+            # if cell area was specified, normalize each row by the input area
+            op.normalize_by_unit_product()
+        else:
+            # divide the values by the kernel area in cells
+            op.v /= (kernel_N[0]*kernel_N[1])
         ops[this_name]=op
 
         for lag in args['dzdt_lags']:
             dz_name='avg_dzdt_'+str(int(scale))+'m'+'_lag'+str(lag)
             op=lin_op(grid, name=this_name, col_N=col_N)\
                 .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
-                    .apply_2d_mask()
-            op.v /= (kernel_N[0]*kernel_N[1])
+                    .apply_2d_mask(mask=cell_area)
+            if cell_area is not None:
+                op.normalize_by_unit_product( wt=lag*grid.delta[2]*2)
+            else:
+                op.v /= (kernel_N[0]*kernel_N[1])
             ops[dz_name]=op
 
     for lag in args['dzdt_lags']:

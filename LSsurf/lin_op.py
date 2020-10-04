@@ -237,7 +237,7 @@ class lin_op:
         unit_op.N_eq=self.N_eq
         unit_op.r, unit_op.c, unit_op.v = [self.r, self.c, np.abs(self.v)/wt]
         unit_op.v =np.abs(unit_op.v)/ wt
-        unit_op.__update_size_and_shape__
+        unit_op.__update_size_and_shape__()
         norm = unit_op.toCSR(row_N=unit_op.N_eq).dot(np.ones(self.shape[1]))
         scale = np.zeros_like(norm)
         scale[norm>0] = 1./norm[norm>0]

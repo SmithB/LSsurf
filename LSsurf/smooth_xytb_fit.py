@@ -257,9 +257,10 @@ def setup_smoothness_constraints(grids, constraint_op_list, args):
         d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + args['E_RMS']['d2z_dt2']/root_delta_V_dz
         constraint_op_list += [d2z_dt2]
 
-def sum_cell_area(grid_f, grid_c, return_op=False):
+def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False):
     # calculate the area of masked cells in a coarse grid within the cells of a fine grid
-    cell_area_f = calc_cell_area(grid_f)*grid_f.mask
+    if cell_area_f is None:
+        cell_area_f = calc_cell_area(grid_f)*grid_f.mask
     n_k=(grid_c.delta[0:2]/grid_f.delta).astype(int) + 1
     fine_to_coarse = lin_op(grid=grid_f).sum_to_grid3( n_k, taper=True, valid_equations_only=False)
     result=fine_to_coarse.toCSR().dot(cell_area_f.ravel()).reshape(grid_c.shape[0:2])
@@ -300,6 +301,7 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
             .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True)
 
         op.apply_2d_mask(mask=cell_area)
+        op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid.cell_area, cell_area_f=cell_area)
 
         if cell_area is not None:
             # if cell area was specified, normalize each row by the input area
@@ -314,8 +316,9 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
             op=lin_op(grid, name=this_name, col_N=col_N)\
                 .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
                     .apply_2d_mask(mask=cell_area)
+            op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid.cell_area, cell_area_f=cell_area)
             if cell_area is not None:
-                op.normalize_by_unit_product( wt=lag*grid.delta[2]*2)
+                op.normalize_by_unit_product( wt=lag*grid.delta[2])
             else:
                 op.v /= (kernel_N[0]*kernel_N[1])
             ops[dz_name]=op

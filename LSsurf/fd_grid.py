@@ -30,6 +30,7 @@ class fd_grid(object):
         self.mask_file=mask_file
         self.mask=None
         self.name=name # name of the degree of freedom specified by the grid
+        self.cell_area=None
         if col_N is None:
             self.col_N=self.col_0+self.N_nodes
         if self.mask_file is not None:

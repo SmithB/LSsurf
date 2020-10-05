@@ -235,13 +235,12 @@ class lin_op:
         # optionally rescale the result by a factor of wt
         unit_op=lin_op(col_N=self.col_N)
         unit_op.N_eq=self.N_eq
-        unit_op.r, unit_op.c, unit_op.v = [self.r, self.c, np.abs(self.v)/wt]
-        unit_op.v =np.abs(unit_op.v)/ wt
+        unit_op.r, unit_op.c, unit_op.v = [self.r, self.c, np.abs(self.v)]
         unit_op.__update_size_and_shape__()
         norm = unit_op.toCSR(row_N=unit_op.N_eq).dot(np.ones(self.shape[1]))
         scale = np.zeros_like(norm)
         scale[norm>0] = 1./norm[norm>0]
-        self.v *= scale[self.r]
+        self.v *= scale[self.r]*wt
 
     def mean_of_bounds(self, bds, mask=None):
         # make a linear operator that calculates the mean of all points
@@ -267,7 +266,7 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, valid_equations_only=True):
+    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, valid_equations_only=True, dims=None):
         # make an operator that adds values with a kernel of size kernel_size pixels
         # centered on the grid cells identified in sub0s
         # optional: specify 'lag' to compute a dz/dt
@@ -278,8 +277,13 @@ class lin_op:
         else:
             half_kernel=np.floor(kernel_size/2).astype(int)
 
-        if sub0s is None:
+        if dims is None:
             dims=range(len(self.grid.shape))
+            n_dims=len(dims)
+        else:
+            n_dims=len(dims)
+
+        if sub0s is None:
             if taper:
                 if valid_equations_only:
                     sub0s = np.meshgrid( *[np.arange(half_kernel+1, self.grid.shape[ii], kernel_size[ii]-1, dtype=int) for ii in dims], indexing='ij')
@@ -287,18 +291,18 @@ class lin_op:
                     sub0s = np.meshgrid( *[np.arange(0, self.grid.shape[ii]+1, kernel_size[ii]-1, dtype=int) for ii in dims], indexing='ij')
             else:
                 sub0s = np.meshgrid(*[np.arange(half_kernel, self.grid.shape[ii], kernel_size[ii], dtype=int) for ii in dims], indexing='ij')
-        ind0 = self.grid.global_ind(sub0s)
+        ind0 = self.grid.global_ind(sub0s[0:n_dims])
 
         if np.mod(kernel_size[0]/2,1)==0:
             # even case
             di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]),\
                              np.arange(-half_kernel[1], half_kernel[1]), indexing='ij')
-            grid_shift=[-self.grid.delta[0]/2, -self.grid.delta[1]/2, 0]
+            grid_shift=[-self.grid.delta[0]/2, -self.grid.delta[1]/2, 0][0:n_dims]
         else:
             # odd_case
             di, dj = np.meshgrid(np.arange(-half_kernel[0], half_kernel[0]+1),\
                              np.arange(-half_kernel[1], half_kernel[1]+1), indexing='ij')
-            grid_shift=[0, 0, 0]
+            grid_shift=[0, 0, 0][0:len(dims)]
 
         # make the weighting matrix:
         wt0=np.ones(kernel_size[0:2], dtype=float)
@@ -322,8 +326,10 @@ class lin_op:
 
         self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0,\
                      valid_equations_only=valid_equations_only )
-
-        self.update_dst_grid(grid_shift, kernel_size)
+        if taper:
+            self.update_dst_grid(grid_shift, kernel_size-1)
+        else:
+            self.update_dst_grid(grid_shift, kernel_size)
 
         return self
 
@@ -447,7 +453,7 @@ class lin_op:
                 these_rows=np.array(ops[ind].TOC['rows'][key], dtype='int')+last_row
                 self.TOC['rows'][key]=these_rows
                 this_row_list.append(these_rows.ravel())
-            # add a TOC entry for all of the sub operators together, if it's 
+            # add a TOC entry for all of the sub operators together, if it's
             # not there already (which happens if we're concatenating composite operators)
             if this_name not in self.TOC['rows']:
                 self.TOC['rows'][this_name]=np.concatenate(this_row_list)
@@ -467,16 +473,16 @@ class lin_op:
     def mask_for_ind0(self, mask_scale=None):
         """
         Sample the mask at the central indices for a linear operator
-        
+
         This function samples the linear operator's mask field at the indices
         corresponding to the 'ind0' for each row of the operator.  The only
         input is:
              mask_scale (dict, or none):   gives the mapping between key values
                   and output values:  if mask_scale={1:0, 2:1}, then all mask
-                  values equal to 1 will be returned as zero, and all mask values 
+                  values equal to 1 will be returned as zero, and all mask values
                   equal to 2 will be returned as 1.
-        """         
-        
+        """
+
         if self.grid.mask is None:
             return np.ones_like(self.ind0, dtype=float)
         if len(self.grid.shape) > len(self.grid.mask.shape):

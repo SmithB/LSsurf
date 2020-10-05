@@ -87,6 +87,9 @@ def setup_grids(args):
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
+    grids['z0'].cell_area=calc_cell_area(grids['z0'])
+    grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
+
     return grids, bds
 
 def setup_mask(data, grids, valid_data, bds, args):
@@ -470,10 +473,12 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     # reshape the components of m to the grid shapes
     m['z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
                                      'y':grids['z0'].ctrs[0],\
+                                     'cell_area': grids['z0'].cell_area, \
                                      'z0':np.reshape(m0[G_data.TOC['cols']['z0']], grids['z0'].shape)})
     m['dz']=pc.grid.data().from_dict({'x':grids['dz'].ctrs[1],\
                                      'y':grids['dz'].ctrs[0],\
                                      'time':grids['dz'].ctrs[2],\
+                                     'cell_area': grids['dz'].cell_area, \
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape)})
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
@@ -483,6 +488,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
         m[key] = pc.grid.data().from_dict({'x':op.dst_grid.ctrs[1], \
                                           'y':op.dst_grid.ctrs[0], \
                                         'time': op.dst_grid.ctrs[2], \
+                                        'cell_area':op.dst_grid.cell_area,\
                                             key: op.grid_prod(m0)})
 
     # report the parameter biases.  Sorted in order of the parameter bias arguments

@@ -3,7 +3,7 @@ from Cython.Build import cythonize
 import logging
 import sys
 import numpy
-
+import os
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 log = logging.getLogger()
@@ -35,6 +35,10 @@ if gdal_output[3]:
     gdal_index = install_requires.index('gdal')
     install_requires[gdal_index] = 'gdal=={0}'.format(gdal_output[3])
 
+if 'CONDA_PREFIX' in os.environ:
+    include_dirs=[numpy.get_include(), os.path.join(os.environ['CONDA_PREFIX'], 'include')]
+else:
+    include_dirs=[numpy.get_include()]
 setup(
     name='LSsurf',
     version='1.0.0.0',
@@ -54,9 +58,8 @@ setup(
         'Programming Language :: Python :: 3.6',
     ],
     packages=find_packages(),
-
+    include_dirs=include_dirs,
     ext_modules=cythonize("LSsurf/*.pyx"),
-    include_dirs=[numpy.get_include()],
     install_requires=install_requires,
     zip_safe=False
 )

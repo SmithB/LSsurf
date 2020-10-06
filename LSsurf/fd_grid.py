@@ -41,7 +41,7 @@ class fd_grid(object):
         return copy.deepcopy(self)
 
     def validate_pts(self, pts):
-        # check if each point is inside the grid
+        # check whether points are inside the grid
         good=np.isfinite(pts[0])
         for dim in range(self.N_dims):
              good[good]=np.logical_and(good[good],  pts[dim][good] >= self.bds[dim][0])
@@ -49,13 +49,18 @@ class fd_grid(object):
         return good
 
     def pos_for_nodes(self, nodes):
-        # find the location for a node in the grid
+        # find the location for a node in the grid from its subscripts
         pos=list()
         inds=np.unravel_index(nodes, self.shape)
         for delta, bd, ind in zip(self.delta, self.bds, inds):
             pos.append((ind*delta)+bd[0])
         return pos
-        
+
+    def get_extent(self, dims=[1, 0]):
+        # return the extent for a slice of the grid for the dimensions in 'dims'.
+        # Extents are the bounds of the grid padded by one half cell.
+        return np.concatenate([self.bds[dim]+self.delta[dim]*np.array([-0.5, 0.5]) for dim in dims])
+
     def float_sub(self, pts, good=None):
         # find the normalized point location within the grid (in subscript coordinates)
         idxf=[np.NaN+np.zeros_like(pts[0]) for i in range(len(pts))]
@@ -64,19 +69,19 @@ class fd_grid(object):
         for dim in range(self.N_dims):
             idxf[dim][good]=(pts[dim][good]-self.bds[dim][0])/self.delta[dim]
         return idxf
-        
+
     def cell_sub_for_pts(self, pts, good=None):
         # find the cell number (equal to the next-smallest subscript) in each dimension
-        idx0=[np.NaN+np.zeros_like(pts[0]) for i in range(len(pts))]        
+        idx0=[np.NaN+np.zeros_like(pts[0]) for i in range(len(pts))]
         if good is None:
             good=self.validate_pts(pts)
         # report the grid indices for the cell that each point in pts falls into
         for dim in np.arange(len(self.shape)):
             idx0[dim][good]=np.floor((pts[dim][good]-self.bds[dim][0])/self.delta[dim])
         return idx0
-    
+
     def global_ind(self, cell_sub, return_valid=False):
-        # find the global index for a particular cell number
+        # find the global index for a cell from its subscript
         cell_sub=[temp.astype(int) for temp in cell_sub]
         dims=range(len(self.shape))
         if return_valid:
@@ -92,7 +97,7 @@ class fd_grid(object):
             return ind
 
     def read_geotif(self, filename, srs_proj4=None, dataType=gdal.GDT_Float32, interp_algorithm=gdal.GRA_NearestNeighbour):
-  
+
         # or it can be stored in the grid
         if srs_proj4 is None:
             srs_proj4=self.srs_proj4
@@ -100,17 +105,17 @@ class fd_grid(object):
         # define the geotransform that matches the current grid:
         #       [  x0,                                 dx,           dxy,      y0,                            dyx,     dy       ]
         this_GT=[self.ctrs[1][0]-self.delta[1]/2.,   self.delta[1], 0.,  self.ctrs[0][-1]+self.delta[0]/2, 0., -self.delta[0]]
-         
-        #create a dataset to hold the image information  
+
+        #create a dataset to hold the image information
         memDriver=gdal.GetDriverByName('Mem')
         #                                nx,              ny,              bands,   datatype
         temp_ds=memDriver.Create('', int(self.shape[1]), int(self.shape[0]), int(1), dataType)
         srs = osr.SpatialReference()
         srs.ImportFromProj4(srs_proj4)
         srs_WKT = srs.ExportToWkt()
-        temp_ds.SetProjection(srs_WKT)       
+        temp_ds.SetProjection(srs_WKT)
         temp_ds.SetGeoTransform(this_GT)
-        
+
         #open the input dataset, and reproject its data onto the memory dataset
         in_ds=gdal.Open(filename)
         #in_ds.SetProjection(srs_WKT)
@@ -120,16 +125,15 @@ class fd_grid(object):
         # copy the data from the memory dataset into an array, z
         z=temp_ds.GetRasterBand(1).ReadAsArray(0, 0, int(self.shape[1]), int(self.shape[0]))
         # turn the invalid values in the input dataset into NaNs
-        inNodata=in_ds.GetRasterBand(1).GetNoDataValue()    
+        inNodata=in_ds.GetRasterBand(1).GetNoDataValue()
         if inNodata is not None:
             z[z==inNodata]=np.NaN
         # flip z top to bottom
         z=np.flipud(z)
-        
+
         # clean up the temporary datasets
         in_ds=None
         temp_ds=None
- 
+
         return z
- 
-   
+

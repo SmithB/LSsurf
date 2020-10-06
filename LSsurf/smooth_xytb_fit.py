@@ -378,6 +378,7 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
     for lag in args['dzdt_lags']:
         this_name='dzdt_lag'+str(lag)
         op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
+        op.dst_grid.cell_area=grid.cell_area
         ops[this_name]=op
     return ops
 
@@ -519,12 +520,12 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     m['z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
                                      'y':grids['z0'].ctrs[0],\
                                      'cell_area': grids['z0'].cell_area, \
-                                     'mask':grids['z0'].mask), \ 
+                                     'mask':grids['z0'].mask, \
                                      'z0':np.reshape(m0[G_data.TOC['cols']['z0']], grids['z0'].shape)})
     m['dz']=pc.grid.data().from_dict({'x':grids['dz'].ctrs[1],\
                                      'y':grids['dz'].ctrs[0],\
                                      'time':grids['dz'].ctrs[2],\
-                                     'cell_area': grids['dz'].cell_area, \
+                                     'cell_area':grids['dz'].cell_area, \
                                      'mask':grids['dz'].mask, \
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape)})
     if 'PS_bias' in G_data.TOC['cols']:

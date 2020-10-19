@@ -33,6 +33,8 @@ class fd_grid(object):
         self.cell_area=None
         if col_N is None:
             self.col_N=self.col_0+self.N_nodes
+        else:
+            self.col_N=col_N
         if self.mask_file is not None:
             self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
             self.mask=np.round(self.mask).astype(np.int)

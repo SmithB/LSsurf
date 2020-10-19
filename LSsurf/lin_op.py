@@ -202,7 +202,6 @@ class lin_op:
         self.diff_op(([0, 0], [0, 0], [0, lag]), coeffs)
         self.__update_size_and_shape__()
         self.update_dst_grid([0, 0, 0.5*lag*self.grid.delta[2]], np.array([1, 1, 1]))
-
         return self
 
     def d2z_dt2(self, DOF='dz', t_lag=1):
@@ -264,6 +263,63 @@ class lin_op:
         self.TOC['cols']={self.name:self.c}
         self.N_eq=1.
         self.__update_size_and_shape__()
+        return self
+
+    def mean_of_mask(self, mask, dzdt_lag=None):
+        # make a linear operator that takes the mean of points multiplied by
+        # a 2-D mask.  If the grid has a time dimension, the operator takes the
+        # mean for each time slice.  If dzdt_lags are provided, it takes the
+        # mean dzdt as a function of time
+        coords=np.meshgrid(*self.grid.ctrs[0:2], indexing='ij')
+        mask_g=mask.interp(coords[1], coords[0])
+        mask_g[~np.isfinite(mask_g)]=0
+        i0, j0 = np.nonzero(mask_g)
+        if self.grid.cell_area is None:
+            v0=mask_g.ravel()[np.flatnonzero(mask_g)]
+        else:
+            v0=(mask_g*self.grid.cell_area).ravel()[np.flatnonzero(mask_g)]
+        v0 /= v0.sum()
+        y0=np.sum((self.grid.bds[0][0]+i0.ravel()*self.grid.delta[0])*v0)
+        x0=np.sum((self.grid.bds[1][0]+j0.ravel()*self.grid.delta[1])*v0)
+        
+        if len(self.grid.shape) < 3:
+            # no time dimension: Just average the grid
+            self.r = np.zeros_like(i0)
+            self.c = self.grid.global_ind([i0,j0])
+            self.v = v0
+            self.N_eq=1
+            self.col_N=np.max(self.c)
+            self.__update_size_and_shape__()
+            self.dst_grid = fd_grid( [[y0, y0], [x0, x0]], \
+                                self.grid.delta, 0,  col_N=0,
+                                srs_proj4=self.grdi.srs_proj4)
+            self.dst_ind0 = np.array([0]).astype(int)
+            return self
+        rr, cc, vv = [[],[], []]
+        if dzdt_lag is None:
+            # average each time slice
+            for ii in range(self.grid.shape[2]):
+                rr += [np.zeros_like(i0)+ii]
+                cc += [self.grid.global_ind([i0, j0, np.zeros_like(i0)+ii])]
+                vv += [v0]
+            t_vals=self.grid.ctrs[2]
+        else:
+            for ii in range(self.grid.shape[2]-dzdt_lag):
+                for dLag in [0, dzdt_lag]:
+                    rr += [np.zeros_like(i0)+ii]    
+                    cc += [self.grid.global_ind([i0, j0, np.zeros_like(i0) + dLag])]
+                    if dLag==0:
+                        vv += [-v0/dzdt_lag/self.grid.delta[2]]
+                    else:
+                        vv += [v0/dLag/self.grid.delta[2]]
+            t_vals=self.grid.ctrs[-1][:-dzdt_lag] + self.grid.delta[-1]*dzdt_lag/2
+        self.r, self.c, self.v = [ np.concatenate(ii) for ii in [rr, cc, vv]] 
+        self.dst_grid = fd_grid( [[y0, y0], [x0, x0], [t_vals[0], t_vals[-1]]], \
+                                self.grid.delta, 0,  col_N=self.r.max(),
+                                srs_proj4=self.grid.srs_proj4)
+        self.N_eq = self.r.max()+1
+        self.__update_size_and_shape__()
+        self.dst_ind0=np.arange(self.N_eq, dtype=int)
         return self
 
     def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, valid_equations_only=True, dims=None):
@@ -336,7 +392,7 @@ class lin_op:
     def update_dst_grid(self, grid_shift, kernel_size):
         rcv0 = np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
         # make a destination grid that spans the output data
-        # the grid centers are shifted by half a self.grid cell in x and y
+        # the grid centers are shifted by grid_shift in each dimension
         dims=range(len(self.grid.shape))
         self.dst_grid = fd_grid(\
             [ [ self.grid.ctrs[dim][rcv0[dim][jj]] + grid_shift[dim] for jj in [0, -1]] for dim in dims],\
@@ -378,9 +434,9 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        P=np.zeros(self.col_N)+np.NaN
+        P=np.zeros(grid.col_N+1)+np.NaN
         P[ind0]=self.toCSR(row_N=ind0.size).dot(m).ravel()
-        return P[grid.col_0:grid.col_N].reshape(grid.shape)
+        return P[grid.col_0:grid.col_N+1].reshape(grid.shape)
 
     def grid_error(self, Rinv, grid=None):
         # calculate the error estimate for an operator and map the result to a grid

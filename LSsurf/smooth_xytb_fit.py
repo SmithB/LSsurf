@@ -387,6 +387,8 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
     return ops
 
 def setup_avg_mask_ops(grid, col_N, avg_masks, dzdt_lags):
+    if avg_masks is None:
+        return {}
     avg_ops={}
     for name, mask in avg_masks.items():
         this_name=name+'_avg_dz'

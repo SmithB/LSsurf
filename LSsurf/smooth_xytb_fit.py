@@ -324,6 +324,10 @@ def calc_cell_area(grid):
 def setup_averaging_ops(grid, col_N, args, cell_area=None):
     # build operators that take the average of of the delta-z grid at large scales.
     # these get used both in the averaging and error-calculation codes
+    
+    if args['avg_scales'] is None:
+        return {}
+    
     N_grid=[ctrs.size for ctrs in grid.ctrs]
     ops={}
     for scale in args['avg_scales']:
@@ -381,6 +385,16 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
         op.dst_grid.cell_area=grid.cell_area
         ops[this_name]=op
     return ops
+
+def setup_avg_mask_ops(grid, col_N, avg_masks, dzdt_lags):
+    avg_ops={}
+    for name, mask in avg_masks.items():
+        this_name=name+'_avg_dz'
+        avg_ops[this_name] = lin_op(grid, col_N=col_N, name=this_name).mean_of_mask(mask, dzdt_lag=None)
+        for lag in dzdt_lags:
+            this_name=name+f'_avg_dzdt_lag{lag}'
+            avg_ops[this_name] = lin_op(grid, col_N=col_N,name=this_name).mean_of_mask(mask, dzdt_lag=lag)
+    return avg_ops      
 
 def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     m1 = m0.copy()
@@ -602,6 +616,7 @@ def smooth_xytb_fit(**kwargs):
     'E_RMS_d2x_PS_bias':None,
     'E_RMS_PS_bias':None,
     'error_res_scale':None,
+    'avg_masks':None,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -699,9 +714,12 @@ def smooth_xytb_fit(**kwargs):
 
     # put the fit and constraint matrices together
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
-
+    
     # setup operators that take averages of the grid at different scales
     averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args)
+    
+    # setup masked averaging ops
+    averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 
     # define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution:
     Ip_c = build_reference_epoch_matrix(G_data, Gc, grids, args['reference_epoch'])

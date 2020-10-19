@@ -288,7 +288,7 @@ class lin_op:
             self.c = self.grid.global_ind([i0,j0])
             self.v = v0
             self.N_eq=1
-            self.col_N=np.max(self.c)
+            self.col_N=np.max(self.c)+1
             self.__update_size_and_shape__()
             self.dst_grid = fd_grid( [[y0, y0], [x0, x0]], \
                                 self.grid.delta, 0,  col_N=0,
@@ -315,7 +315,7 @@ class lin_op:
             t_vals=self.grid.ctrs[-1][:-dzdt_lag] + self.grid.delta[-1]*dzdt_lag/2
         self.r, self.c, self.v = [ np.concatenate(ii) for ii in [rr, cc, vv]] 
         self.dst_grid = fd_grid( [[y0, y0], [x0, x0], [t_vals[0], t_vals[-1]]], \
-                                self.grid.delta, 0,  col_N=self.r.max(),
+                                self.grid.delta, 0,  col_N=self.r.max()+1,
                                 srs_proj4=self.grid.srs_proj4)
         self.N_eq = self.r.max()+1
         self.__update_size_and_shape__()
@@ -436,7 +436,7 @@ class lin_op:
             ind0=self.dst_ind0
         P=np.zeros(grid.col_N+1)+np.NaN
         P[ind0]=self.toCSR(row_N=ind0.size).dot(m).ravel()
-        return P[grid.col_0:grid.col_N+1].reshape(grid.shape)
+        return P[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def grid_error(self, Rinv, grid=None):
         # calculate the error estimate for an operator and map the result to a grid

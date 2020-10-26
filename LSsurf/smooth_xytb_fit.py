@@ -325,11 +325,19 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
     # build operators that take the average of of the delta-z grid at large scales.
     # these get used both in the averaging and error-calculation codes
     
+    ops={}
+    # build the not-averaged dz/dt operators (these are not masked)
+    for lag in args['dzdt_lags']:
+        this_name='dzdt_lag'+str(lag)
+        op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
+        op.dst_grid.cell_area=grid.cell_area
+        ops[this_name]=op
+    
+    # make the averaged ops
     if args['avg_scales'] is None:
-        return {}
+        return ops
     
     N_grid=[ctrs.size for ctrs in grid.ctrs]
-    ops={}
     for scale in args['avg_scales']:
         this_name='avg_dz_'+str(int(scale))+'m'
         kernel_N=np.floor(np.array([scale/dd for dd in grid.delta[0:2]]+[1])).astype(int)
@@ -378,12 +386,6 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 op.v /= (kernel_N[0]*kernel_N[1])
             ops[dz_name]=op
     
-    # build the not-averaged dz/dt operators (these are not masked)
-    for lag in args['dzdt_lags']:
-        this_name='dzdt_lag'+str(lag)
-        op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
-        op.dst_grid.cell_area=grid.cell_area
-        ops[this_name]=op
     return ops
 
 def setup_avg_mask_ops(grid, col_N, avg_masks, dzdt_lags):

@@ -307,7 +307,7 @@ class lin_op:
             for ii in range(self.grid.shape[2]-dzdt_lag):
                 for dLag in [0, dzdt_lag]:
                     rr += [np.zeros_like(i0)+ii]    
-                    cc += [self.grid.global_ind([i0, j0, np.zeros_like(i0) + dLag])]
+                    cc += [self.grid.global_ind([i0, j0, np.zeros_like(i0) + ii+ dLag])]
                     if dLag==0:
                         vv += [-v0/dzdt_lag/self.grid.delta[2]]
                     else:

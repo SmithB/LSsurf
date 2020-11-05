@@ -28,7 +28,8 @@ class fd_grid(object):
         self.col_0=col_0 # first global_ind for the grid
         self.srs_proj4=srs_proj4 # Well Known Text for the spatial reference system of the grid
         self.mask_file=mask_file
-        self.mask=None
+        self.mask=None  # binary mask 
+        self.user_data=dict() # storage space
         self.name=name # name of the degree of freedom specified by the grid
         self.cell_area=None
         if col_N is None:

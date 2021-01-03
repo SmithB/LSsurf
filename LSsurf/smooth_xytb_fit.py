@@ -490,7 +490,7 @@ def parse_biases(m, bias_model, bias_params):
             slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
     return b_dict, slope_bias_dict
 
-def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_res_scale=None):
+def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_scale=1):
     tic=time()
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
     z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
@@ -510,7 +510,10 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
     tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
-
+    
+    # if a scaling for the errors has been provided, mutliply E0 by it
+    E0 *= error_scale
+    
     # generate the full E vector.  E0 appears to be an ndarray,
     E0=np.array(Ip_c.dot(E0)).ravel()
     E['sigma_z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
@@ -644,6 +647,9 @@ def smooth_xytb_fit(**kwargs):
     # define the grids
     grids, bds = setup_grids(args)
 
+    #print("\nstarting smooth_xytb_fit")
+    #summarize_time(args['data'], grids['dz'].ctrs[2], np.ones(args['data'].shape, dtype=bool))
+    
     # select only the data points that are within the grid bounds
     valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
     valid_dz=grids['dz'].validate_pts((args['data'].coords()))
@@ -656,6 +662,9 @@ def smooth_xytb_fit(**kwargs):
 
     # subset the data based on the valid mask
     data=args['data'].copy_subset(valid_data)
+
+    #print("\n\nafter validation")
+    #summarize_time(data, grids['dz'].ctrs[2], np.ones(data.shape, dtype=bool))
 
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
@@ -767,9 +776,13 @@ def smooth_xytb_fit(**kwargs):
         if args['VERBOSE']:
             print("Starting uncertainty calculation", flush=True)
             tic_error=time()
+        # recalculate the error scaling from the misfits
+        rs=(data.z_est-data.z)/data.sigma
+        error_scale=RDE(rs[data.three_sigma_edit==1])
+        print(f"scaling uncertainties by {error_scale}")
         calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, averaging_ops, \
                          bias_model, args['bias_params'], dzdt_lags=args['dzdt_lags'], timing=timing, \
-                             error_res_scale=args['error_res_scale'])
+                             error_scale=error_scale)
         if args['VERBOSE']:
             print("\tUncertainty propagation took %3.2f seconds" % (time()-tic_error), flush=True)
 
@@ -801,6 +814,16 @@ def main():
                      srs_proj4=SRS_proj4, VERBOSE=True, dzdt_lags=[1])
     return S
 
+
+def summarize_time(data, t0, ind):
+    if 't' in data.fields:
+        t=data.t
+
+    if 'time' in data.fields:
+        t=data.time
+    for ti in range(len(t0)-1):
+        N=np.sum((t[ind]>t0[ti]) & (t[ind]<t0[ti+1])) 
+        print(f"{t0[ti]} to {t0[ti+1]}: {N}")
 
 if __name__=='__main__':
     main()

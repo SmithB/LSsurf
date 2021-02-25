@@ -6,8 +6,9 @@ Created on Mon Dec  4 14:07:39 2017
 """
 #import scipy.sparse as sp
 import numpy as np
-from osgeo import gdal, osr
+from osgeo import gdal, osr, ogr
 import copy
+import pointCollection as pc
 
 class fd_grid(object):
     # a fd_grid is an object that defines the nodal locations and their indices
@@ -37,9 +38,14 @@ class fd_grid(object):
         else:
             self.col_N=col_N
         if self.mask_file is not None:
-            self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
-            self.mask=np.round(self.mask).astype(np.int)
-
+            # read the mask based on its extension
+            # geotif:
+            if self.mask_file.endswith('.tif'):
+                self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
+                self.mask=np.round(self.mask).astype(np.int)
+            # vector (add more formats as needed)
+            elif self.mask_file.endswith('.shp') or self.mask_file.endswith('.db'):
+                self.mask=self.burn_mask(self.mask_file)
     def copy(self):
         return copy.deepcopy(self)
 
@@ -140,3 +146,15 @@ class fd_grid(object):
 
         return z
 
+    def burn_mask(self, mask_file, srs_proj4=None):
+        mask_ds = pc.grid.data().from_dict({'x':self.ctrs[1], 'y':self.ctrs[0], 'z':np.zeros(self.shape[0:2])})\
+            .to_gdal(srs_proj4=self.srs_proj4)
+        vector_mask=ogr.Open(mask_file)
+        mask_layer=vector_mask.GetLayer()
+        gdal.RasterizeLayer(mask_ds, [1], mask_layer, burn_values=[1])
+        vector_mask=None
+        return np.flipud(mask_ds.readAsArray())
+        
+        
+
+        

@@ -729,7 +729,7 @@ def smooth_xytb_fit(**kwargs):
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
     
     # setup operators that take averages of the grid at different scales
-    averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args)
+    averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args, cell_area=grids['dz'].cell_area)
     
     # setup masked averaging ops
     averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))

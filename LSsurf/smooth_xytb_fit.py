@@ -416,12 +416,17 @@ def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     r_DEM=data.z - G_data.toCSR().dot(m1) - data.DEM
     return in_TSE[np.abs(r_DEM[in_TSE]-np.nanmedian(r_DEM[in_TSE]))<DEM_tol]
 
-def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args):
+def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
+                bias_model=None):
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
 
     #print(f"iterate_fit: G.shape={Gcoo.shape}, G.nnz={Gcoo.nnz}, data.shape={data.shape}", flush=True)
     in_TSE_original=np.zeros(data.shape, dtype=bool)
     in_TSE_original[in_TSE]=True
+
+    min_tse_iterations=2
+    if args['bias_nsigma_iteration'] is not None:
+        min_tse_iterations=np.max([min_tse_iterations, args['bias_nsigma_iteration']+1])
 
     for iteration in range(args['max_iterations']):
         # build the parsing matrix that removes invalid rows
@@ -446,13 +451,32 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args):
 
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
-
+        ###testing
+        in_TSE = (np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
+        
+        # if bias_nsigma_edit is specified, check for biases that are more than
+        # args['bias_nsigma_edit'] times their expected values.  
+        if  args['bias_nsigma_edit'] is not None and iteration >= args['bias_nsigma_iteration']:
+            if 'edited' not in bias_model['bias_param_dict']:
+                bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
+            bias_dict, slope_bias_dict=parse_biases(m0, bias_model, args['bias_params'])
+            bad_bias_IDs=np.array(bias_dict['ID'])\
+                [(np.abs(bias_dict['val']) > args['bias_nsigma_edit'] * np.array(bias_dict['expected'])\
+                                                                      * np.maximum(1, sigma_hat)) \
+                 | bias_model['bias_param_dict']['edited']]
+            print(bad_bias_IDs)
+            for ID in bad_bias_IDs:
+                mask=np.ones(data.size, dtype=bool)
+                #Mark the ID as edited (because it will have a bias estimate of zero in subsequent iterations)
+                bias_model['bias_param_dict']['edited'][bias_model['bias_param_dict']['ID'].index(ID)]=True
+                # mark all data associated with the ID as invalid
+                for field, field_val in bias_model['bias_ID_dict'][ID].items():
+                    if field in data.fields:
+                        mask &= (getattr(data, field).ravel()==field_val)
+                in_TSE[mask==1]=0
         if 'editable' in data.fields:
-            in_TSE = (np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
             in_TSE[data.editable==0] = in_TSE_original[data.editable==0]
-            in_TSE = np.flatnonzero(in_TSE)
-        else:
-            in_TSE = np.flatnonzero(np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
+        in_TSE = np.flatnonzero(in_TSE)
 
         if args['DEM_tol'] is not None:
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
@@ -470,7 +494,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args):
                 if args['VERBOSE']:
                     print("filtering unchanged, exiting after iteration %d" % iteration)
                 break
-        if iteration >= 2:
+        if iteration >= min_tse_iterations:
             if sigma_hat <= 1:
                 if args['VERBOSE']:
                     print("sigma_hat LT 1, exiting after iteration %d" % iteration, flush=True)
@@ -489,9 +513,11 @@ def parse_biases(m, bias_model, bias_params):
             ID_dict: a dictionary giving the parameters and associated bias values for each ibas ID
     """
     slope_bias_dict={}
-    b_dict={param:list() for param in bias_params+['val']}
+    b_dict={param:list() for param in bias_params+['val','ID','expected']}
     for item in bias_model['bias_ID_dict']:
         b_dict['val'].append(m[bias_model['bias_ID_dict'][item]['col']])
+        b_dict['ID'].append(item)
+        b_dict['expected'].append(bias_model['E_bias'][item])
         for param in bias_params:
             b_dict[param].append(bias_model['bias_ID_dict'][item][param])
     if 'slope_bias_dict' in bias_model:
@@ -634,6 +660,8 @@ def smooth_xytb_fit(**kwargs):
     'E_RMS_PS_bias':None,
     'error_res_scale':None,
     'avg_masks':None,
+    'bias_nsigma_edit':None,
+    'bias_nsigma_iteration':2,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -683,6 +711,8 @@ def smooth_xytb_fit(**kwargs):
 
     # Check if we have any data.  If not, quit
     if data.size==0:
+        if args['VERBOSE']:
+            print("smooth_xytb_fit: no valid data")
         return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # define the interpolation operator, equal to the sum of the dz and z0 operators
@@ -764,8 +794,8 @@ def smooth_xytb_fit(**kwargs):
     if args['max_iterations'] > 0:
         tic_iteration=time()
         m0, sigma_hat, in_TSE, in_TSE_last, rs_data=iterate_fit(data, Gcoo, rhs, \
-                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, args)
-
+                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, args, \
+                                    bias_model=bias_model)
 
         timing['iteration']=time()-tic_iteration
         in_TSE=in_TSE_last

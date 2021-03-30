@@ -321,13 +321,23 @@ def calc_cell_area(grid):
     lat=pc.data().from_dict({'x':xg, 'y':yg}).get_latlon(proj4_string=grid.srs_proj4).latitude
     return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
 
+#def sym_range(N, ni, offset=0.5):
+#    out=np.arange(int(ni*offset), int(N/2), int(ni))
+#    if offset==0:
+#        out=np.r_[-out[-1:0:-1], out]+int(np.floor(N/2))
+#    else:
+#        out=np.r_[-out[-1::-1], out]+int(np.floor(N/2))
+#    out=out[np.abs(out-N/2)<= N/2-ni/2]
+#    return out
+
 def sym_range(N, ni, offset=0.5):
-    out=np.arange(int(ni*offset), int(N/2), int(ni))
+    # calculate a range of indices that are symmetric WRT the center of a grid
+    out=np.arange((ni*offset), (N/2), (ni))
     if offset==0:
         out=np.r_[-out[-1:0:-1], out]+int(np.floor(N/2))
     else:
         out=np.r_[-out[-1::-1], out]+int(np.floor(N/2))
-    out=out[np.abs(out-N/2)<= N/2-ni/2]
+    out=np.floor(out[np.abs(out-N/2)<= N/2-ni/2]).astype(int)
     return out
 
 def setup_averaging_ops(grid, col_N, args, cell_area=None):

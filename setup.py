@@ -1,12 +1,17 @@
-from setuptools import setup, find_packages
-from Cython.Build import cythonize
+from setuptools import setup, Extension, find_packages
+import subprocess
 import logging
 import sys
-import numpy
 import os
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 log = logging.getLogger()
+
+# check for numpy installation
+try:
+    import numpy
+except ImportError:
+    raise ImportError('NumPy is required to install LSsurf')
 
 # get long_description from README.md
 with open("README.md", "r") as fh:
@@ -35,10 +40,25 @@ if gdal_output[3]:
     gdal_index = install_requires.index('gdal')
     install_requires[gdal_index] = 'gdal=={0}'.format(gdal_output[3])
 
-if 'CONDA_PREFIX' in os.environ:
-    include_dirs=[numpy.get_include(), os.path.join(os.environ['CONDA_PREFIX'], 'include')]
+# append conda include path
+conda_prefix = os.environ.get('CONDA_PREFIX')
+if conda_prefix:
+    include_dirs=[numpy.get_include(), os.path.join(conda_prefix, 'include')]
 else:
     include_dirs=[numpy.get_include()]
+
+# Setuptools 18.0 properly handles Cython extensions.
+setup_requires=[
+    'setuptools>=18.0',
+    'cython',
+]
+# cythonize extensions
+ext_modules=[
+    Extension('LSsurf.inv_tr_upper', sources=['LSsurf/inv_tr_upper.pyx']),
+    Extension('LSsurf.propagate_qz_errors', sources=['LSsurf/propagate_qz_errors.pyx']),
+    Extension('LSsurf.spsolve_tr_upper', sources=['LSsurf/spsolve_tr_upper.pyx'])
+]
+
 setup(
     name='LSsurf',
     version='1.0.0.0',
@@ -59,7 +79,8 @@ setup(
     ],
     packages=find_packages(),
     include_dirs=include_dirs,
-    ext_modules=cythonize("LSsurf/*.pyx"),
+    setup_requires=setup_requires,
+    ext_modules=ext_modules,
     install_requires=install_requires,
     zip_safe=False
 )

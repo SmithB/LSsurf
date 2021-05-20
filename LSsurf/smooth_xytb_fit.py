@@ -79,8 +79,9 @@ def setup_grids(args):
         W: dictionary with entries 'x','y','t' specifying the domain width in x, y, and time
         ctr: dictionary with entries 'x','y','t' specifying the domain center in x, y, and time
         spacing: dictionary with entries 'z0','dz' and 'dt' specifying the spacing of the z0 grid, the spacing of the dz grid, and the duration of the epochs
-        srs_proj4: a proj4 string specifying the data projection
+        srs_proj4: a proj4 string specifying the data projection       
         mask_file: the mask file which has 1 for points in the domain (data will be used and strong constraints applied)
+        mask_data: pointCollection.data object containing the mask.  If this is specified, mask_file is ignored
     Outputs:
         grids: (dict) a dictionary with entries 'z0', 'dz' and 't', each containing a fd_grid object
         bds: (dict) a dictionary specifying the domain bounds in x, y, and t (2-element vector for each)
@@ -91,12 +92,19 @@ def setup_grids(args):
     '''
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
+    if args['mask_data'] is not None:
+        mask_file = None
+    else:
+        mask_file=args['mask_file']
+        
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
+         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
+         mask_data=args['mask_data'])
+    
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
          name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-        mask_file=args['mask_file'])
+         mask_file=mask_file, mask_data=args['mask_data'])
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
@@ -116,7 +124,7 @@ def setup_mask(data, grids, valid_data, bds, args):
 
     '''
 
-    temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
+    temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'], mask_data=args['mask_data'])
     data_mask=lin_op(temp, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['z0'].mask.ravel())
     data_mask[~np.isfinite(data_mask)]=0
     if np.any(data_mask==0):
@@ -206,6 +214,8 @@ def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
         bias_model['bias_ID_dict'][key]['col']=col_0+key
     # the confidence for each bias parameter being zero is in bias_model['E_bias']
     Gc_bias.expected=np.array([bias_model['E_bias'][ind] for ind in ii])
+    if np.any(Gc_bias.expected==0):
+        raise(ValueError('found an zero value in the expected biases'))
     constraint_op_list.append(Gc_bias)
     G_data.add(G_bias)
 
@@ -244,7 +254,8 @@ def setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args):
     '''
     grids['PS_bias']=fd_grid( [bds['y'], bds['x']], \
        [args['spacing']['dz'], args['spacing']['dz']],\
-       name='PS_bias', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'], \
+       name='PS_bias', srs_proj4=args['srs_proj4'],\
+       mask_file=args['mask_file'], mask_data=args['mask_data'], \
        col_0=grids['dz'].col_N)
     ps_mtx=lin_op(grid=grids['PS_bias'], name='PS_bias').\
         interp_mtx(data.coords()[0:2])
@@ -283,6 +294,7 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
     root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
     grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
     grad2_z0.expected=E_RMS['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(mask_scale)
+    
     constraint_op_list += [grad2_z0]
     if 'dz0_dx' in E_RMS:
         grad_z0=lin_op(grids['z0'], name='grad_z0').grad(DOF='z0')
@@ -303,6 +315,9 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
         d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
         d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + E_RMS['d2z_dt2']/root_delta_V_dz
         constraint_op_list += [d2z_dt2]
+    for constraint in constraint_op_list:
+        if np.any(constraint.expected==0):
+            raise(ValueError(f'found zero value in the expected values for {constraint.name}'))
 
 def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None, taper=True):
     # calculate the area of masked cells in a coarse grid within the cells of a fine grid
@@ -650,6 +665,7 @@ def smooth_xytb_fit(**kwargs):
     args={'reference_epoch':0,
     'W_ctr':1e4,
     'mask_file':None,
+    'mask_data':None,
     'mask_scale':None,
     'compute_E':False,
     'max_iterations':10,
@@ -690,7 +706,6 @@ def smooth_xytb_fit(**kwargs):
     E={}
     R={}
     RMS={}
-
     tic=time()
     # define the grids
     grids, bds = setup_grids(args)
@@ -716,7 +731,7 @@ def smooth_xytb_fit(**kwargs):
 
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
-    if args['mask_file'] is not None:
+    if args['mask_file'] is not None or args['mask_data'] is not None:
         setup_mask(data, grids, valid_data, bds, args)
 
     # Check if we have any data.  If not, quit
@@ -766,7 +781,10 @@ def smooth_xytb_fit(**kwargs):
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
         Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
     Ed=data.sigma.ravel()
-
+    if np.any(Ed==0):
+        raise(ValueError('zero value found in data sigma'))
+    if np.any(Ec==0):
+        raise(ValueError('zero value found in constraint sigma'))
     #print({op.name:[Ec[Gc.TOC['rows'][op.name]].min(),  Ec[Gc.TOC['rows'][op.name]].max()] for op in constraint_op_list})
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))

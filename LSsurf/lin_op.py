@@ -541,6 +541,8 @@ class lin_op:
 
         if self.grid.mask is None:
             return np.ones_like(self.ind0, dtype=float)
+        # if the operator's grid has more dimensions than the mask does, 
+        # need to use the first two indices to pick the grid cells
         if len(self.grid.shape) > len(self.grid.mask.shape):
             temp=np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
             subs=tuple([temp[ii] for ii in range(len(self.grid.mask.shape))])
@@ -549,7 +551,7 @@ class lin_op:
             subs=np.unravel_index(inds, self.grid.mask.shape)
         temp=self.grid.mask[subs]
         if mask_scale is not None:
-            temp2=np.zeros_like(temp)
+            temp2=np.zeros_like(temp, dtype=np.float)
             for key in mask_scale.keys():
                 temp2[temp==key]=mask_scale[key]
             return temp2

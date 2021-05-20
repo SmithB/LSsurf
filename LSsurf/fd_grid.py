@@ -18,7 +18,7 @@ class fd_grid(object):
     # first global index can be shifted by specifying a nonzero col_0 value,
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
-    def __init__(self, bounds, deltas, col_0=0, col_N=None, srs_proj4=None, mask_file=None, name=''):
+    def __init__(self, bounds, deltas, col_0=0, col_N=None, srs_proj4=None, mask_file=None, mask_data=None, name=''):
         self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
@@ -28,7 +28,11 @@ class fd_grid(object):
         self.stride=np.flipud(np.cumprod(np.flipud(np.r_[self.shape[1:], 1]))) # difference in global_ind between adjacent nodes
         self.col_0=col_0 # first global_ind for the grid
         self.srs_proj4=srs_proj4 # Well Known Text for the spatial reference system of the grid
-        self.mask_file=mask_file
+        if mask_data is None:
+            # ignore the mask file if mask_data is provided
+            self.mask_file=mask_file
+        else:
+            self.mask_file=None
         self.mask=None  # binary mask 
         self.user_data=dict() # storage space
         self.name=name # name of the degree of freedom specified by the grid
@@ -37,6 +41,7 @@ class fd_grid(object):
             self.col_N=self.col_0+self.N_nodes
         else:
             self.col_N=col_N
+        
         if self.mask_file is not None:
             # read the mask based on its extension
             # geotif:
@@ -46,6 +51,24 @@ class fd_grid(object):
             # vector (add more formats as needed)
             elif self.mask_file.endswith('.shp') or self.mask_file.endswith('.db'):
                 self.mask=self.burn_mask(self.mask_file)
+        elif mask_data is not None:
+            mask_delta = [mask_data.y[1]-mask_data.y[0] , mask_data.x[1]-mask_data.x[0]]
+            interp_field='z' # default
+            if self.delta[1] > mask_data.x[1]-mask_data.x[0] or self.delta[0] > mask_data.y[1]-mask_data.y[0]:
+                from scipy.ndimage import binary_erosion
+                Nx = int(np.ceil(self.delta[1]/mask_delta[0]/2))
+                Ny = int(np.ceil(self.delta[0]/mask_delta[0]/2))
+                
+                if Nx > 1 or Ny > 1:
+                    mask_data.assign({'z_coarse':mask_data.z.copy()})
+                    interp_field='z_coarse'
+                if Nx > 1:
+                    mask_data.z_coarse = binary_erosion(mask_data.z_coarse, np.ones([Nx,1]))
+                if Ny > 1:
+                    mask_data.z_coarse = binary_erosion(mask_data.z_coarse, np.ones([1, Ny]))
+                
+            self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True, field=interp_field) > 0.5
+            
 
     def copy(self):
         return copy.deepcopy(self)

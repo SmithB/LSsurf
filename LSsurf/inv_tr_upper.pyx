@@ -8,8 +8,12 @@ LTYPE=np.int64
 ctypedef np.int64_t LTYPE_t
 FTYPE=np.float
 ctypedef np.float_t FTYPE_t
+from libc.math cimport abs
+
 
 @cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
 
 #def propagate_qz_errors(np.ndarray[ITYPE_t, ndim=1] indptr, np.ndarray[ITYPE_t, ndim=1] indices, np.ndarray[FTYPE_t, ndim=1] data, np.ndarray[FTYPE_t, ndim=1] E):
 def inv_tr_upper(R,  np.int_t nnz, float tol):
@@ -74,7 +78,7 @@ def inv_tr_upper(R,  np.int_t nnz, float tol):
             this_x /= data[indptr_start]
             x[i]=this_x
             # write out the results
-            if np.abs(this_x) > tol or i==col:                                
+            if i==col or abs(this_x) > tol:
                 #if out_ind > max_ind:
                 #    status=1
                 #    break

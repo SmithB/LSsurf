@@ -149,12 +149,12 @@ class lin_op:
         delta_ind=np.c_[[kk.ravel() for kk in list_of_dims]]
         n_neighbors=delta_ind.shape[1]
         Npts=len(pts[0])
-        rr=np.zeros([Npts, n_neighbors])
-        cc=np.zeros([Npts, n_neighbors])
-        vv= np.ones([Npts, n_neighbors])
+        rr=np.zeros([Npts, n_neighbors], dtype=int)
+        cc=np.zeros([Npts, n_neighbors], dtype=int)
+        vv= np.ones([Npts, n_neighbors], dtype=float)
         # make lists of row and column indices and weights for the nodes
         for ii in range(n_neighbors):
-            rr[:,ii]=np.arange(len(pts[0]))
+            rr[:,ii]=np.arange(len(pts[0]), dtype=int)
             cc[:,ii]=global_ind+np.sum(self.grid.stride*delta_ind[:,ii])
             for dd in range(self.grid.N_dims):
                 if delta_ind[dd, ii]==0:

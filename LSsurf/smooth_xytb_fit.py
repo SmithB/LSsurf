@@ -106,7 +106,10 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
-    grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
+    if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
+        grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
+    else:
+        grids['dz'].cell_area=calc_cell_area(grids['dz'])
 
     return grids, bds
 
@@ -330,8 +333,11 @@ def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None,
 
 def calc_cell_area(grid):
     xg, yg = np.meshgrid(grid.ctrs[1], grid.ctrs[0])
-    lat=pc.data().from_dict({'x':xg, 'y':yg}).get_latlon(proj4_string=grid.srs_proj4).latitude
-    return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
+    if grid.srs_proj4 is not None:
+        lat=pc.data().from_dict({'x':xg, 'y':yg}).get_latlon(proj4_string=grid.srs_proj4).latitude
+        return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
+    else:
+        return np.ones(grid.shape[0:2])*grid.delta[0]*grid.delta[1]
 
 #def sym_range(N, ni, offset=0.5):
 #    out=np.arange(int(ni*offset), int(N/2), int(ni))

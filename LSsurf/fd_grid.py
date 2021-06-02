@@ -68,7 +68,8 @@ class fd_grid(object):
                     mask_data.z_coarse = binary_erosion(mask_data.z_coarse, np.ones([1, Ny]))
                 
             self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True, field=interp_field) > 0.5
-            
+        else:
+            self.mask=np.ones(self.shape[0:2], dtype=bool)
 
     def copy(self):
         return copy.deepcopy(self)

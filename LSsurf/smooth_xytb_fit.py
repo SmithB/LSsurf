@@ -8,17 +8,14 @@ import numpy as np
 from LSsurf.fd_grid import fd_grid
 from LSsurf.lin_op import lin_op
 import scipy.sparse as sp
-import matplotlib.pyplot as plt
 from LSsurf.data_slope_bias import data_slope_bias
+from LSsurf.setup_grid_bias import setup_grid_bias
 #from LSsurf.read_CS2_data import make_test_data
 import copy
 import sparseqr
 from time import time, ctime
 from LSsurf.RDE import RDE
 from LSsurf.unique_by_rows import unique_by_rows
-import os
-import h5py
-import json
 #import LSsurf.op_structure_checks as checks
 import pointCollection as pc
 #import scipy.sparse.linalg as spl
@@ -610,8 +607,18 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                      'cell_area':grids['dz'].cell_area, \
                                      'mask':grids['dz'].mask, \
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape)})
-    if 'PS_bias' in G_data.TOC['cols']:
-        m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
+
+    if args['grid_bias_model_args'] is not None:
+        m['grid_biases']={}
+        for temp in args['grid_bias_model_args']:
+            this_grid=temp['grid']
+            m['grid_biases'][this_grid.name]=pc.grid.data().from_dict({
+                'x': this_grid.ctrs[1],
+                'y': this_grid.ctrs[0], 
+                this_grid.name:np.reshape(m0[this_grid.col_0:this_grid.col_N], this_grid.shape)})
+
+    #if 'PS_bias' in G_data.TOC['cols']:
+    #    m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
 
     # calculate height rates and averages
     for key, op  in averaging_ops.items():
@@ -686,6 +693,7 @@ def smooth_xytb_fit(**kwargs):
     'E_RMS_PS_bias':None,
     'error_res_scale':None,
     'avg_masks':None,
+    'grid_bias_model_args':None,
     'bias_nsigma_edit':None,
     'bias_nsigma_iteration':2,
     'VERBOSE': True}
@@ -747,9 +755,14 @@ def smooth_xytb_fit(**kwargs):
     # define the smoothness constraints
     constraint_op_list=[]
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'], args['mask_scale'])
-
-    if args['E_RMS_d2x_PS_bias'] is not None:
-        setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
+    
+    # setup the smooth biases
+    if args['grid_bias_model_args'] is not None:
+        for bm_args in args['grid_bias_model_args']:
+            setup_grid_bias(data, G_data, constraint_op_list, grids, **bm_args)
+    
+    #if args['E_RMS_d2x_PS_bias'] is not None:
+    #    setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
 
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:

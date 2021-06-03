@@ -363,15 +363,18 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
     # these get used both in the averaging and error-calculation codes
 
     ops={}
-    # build the not-averaged dz/dt operators (these are not masked)
-    for lag in args['dzdt_lags']:
-        this_name='dzdt_lag'+str(lag)
-        op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
-        op.dst_grid.cell_area=grid.cell_area
-        ops[this_name]=op
+    if args['dzdt_lags'] is not None:
+        # build the not-averaged dz/dt operators (these are not masked)
+        for lag in args['dzdt_lags']:
+            this_name='dzdt_lag'+str(lag)
+            op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
+            op.dst_grid.cell_area=grid.cell_area
+            ops[this_name]=op
 
     # make the averaged ops
     if args['avg_scales'] is None:
+        return ops
+    if args['dzdt_lags'] is None:
         return ops
 
     N_grid=[ctrs.size for ctrs in grid.ctrs]
@@ -691,7 +694,7 @@ def smooth_xytb_fit(**kwargs):
     'DEM_tol':None,
     'repeat_dt': 1,
     'Edit_only': False,
-    'dzdt_lags':[1, 4],
+    'dzdt_lags':None,
     'avg_scales':[],
     'data_slope_sensors':None,
     'E_slope':0.05,

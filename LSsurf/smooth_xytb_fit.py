@@ -451,7 +451,8 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
                 bias_model=None):
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
 
-    #print(f"iterate_fit: G.shape={Gcoo.shape}, G.nnz={Gcoo.nnz}, data.shape={data.shape}", flush=True)
+    # save the original state of the in_TSE variable so that we can force the non-editable
+    # TSE values to remain in their original state
     in_TSE_original=np.zeros(data.shape, dtype=bool)
     in_TSE_original[in_TSE]=True
 
@@ -648,6 +649,11 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
 
     # parse the resduals to assess the contributions of the total error:
+
+    # calculate the data residuals
+    R['data']=np.sum((((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])/data.sigma[data.three_sigma_edit==1])**2))
+    RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
+
     # Make the C matrix for the constraints
     TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
     # scaled residuals
@@ -848,14 +854,18 @@ def smooth_xytb_fit(**kwargs):
                                     bias_model=bias_model)
 
         timing['iteration']=time()-tic_iteration
+        # in_TSE_last is the list of points in the last inversion step
+        # this needs to be converted from a list of data to a boolean array
         in_TSE=in_TSE_last
-        valid_data[valid_data]=(np.abs(rs_data)<3.0*np.maximum(1, sigma_hat))
-        data.assign({'three_sigma_edit':np.abs(rs_data)<3.0*np.maximum(1, sigma_hat)})
+        data.assign({'three_sigma_edit':np.zeros_like(data.x, dtype=bool)})
+        data.three_sigma_edit[in_TSE]=1
+        # copy this into the valid_data array
+        valid_data[valid_data]=data.three_sigma_edit
+
         # report the model-based estimate of the data points
         data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
+        # reshapethe model vector into the grid outputs
         parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
-        R['data']=np.sum((((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])/data.sigma[data.three_sigma_edit==1])**2))
-        RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
 
     # Compute the error in the solution if requested
     if args['compute_E']:

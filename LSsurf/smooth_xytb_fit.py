@@ -486,7 +486,6 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
 
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
-        ###testing
         in_TSE = (np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
         
         # if bias_nsigma_edit is specified, check for biases that are more than
@@ -501,14 +500,15 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
                  | bias_model['bias_param_dict']['edited']]
             print(bad_bias_IDs)
             for ID in bad_bias_IDs:
-                mask=np.ones(data.size, dtype=bool)
+                #mask=np.ones(data.size, dtype=bool)
                 #Mark the ID as edited (because it will have a bias estimate of zero in subsequent iterations)
                 bias_model['bias_param_dict']['edited'][bias_model['bias_param_dict']['ID'].index(ID)]=True
+            in_TSE[np.in1d(data.bias_ID, bad_bias_IDs)]=False
                 # mark all data associated with the ID as invalid
-                for field, field_val in bias_model['bias_ID_dict'][ID].items():
-                    if field in data.fields:
-                        mask &= (getattr(data, field).ravel()==field_val)
-                in_TSE[mask==1]=0
+                #for field, field_val in bias_model['bias_ID_dict'][ID].items():
+                #    if field in data.fields:
+                #        mask &= (getattr(data, field).ravel()==field_val)
+                #in_TSE[mask==1]=0
         if 'editable' in data.fields:
             in_TSE[data.editable==0] = in_TSE_original[data.editable==0]
         in_TSE = np.flatnonzero(in_TSE)
@@ -549,6 +549,7 @@ def parse_biases(m, bias_model, bias_params):
     """
     slope_bias_dict={}
     b_dict={param:list() for param in bias_params+['val','ID','expected']}
+    # loop over the keys in bias_model['bias_ID_dict']
     for item in bias_model['bias_ID_dict']:
         b_dict['val'].append(m[bias_model['bias_ID_dict'][item]['col']])
         b_dict['ID'].append(item)
@@ -720,6 +721,7 @@ def smooth_xytb_fit(**kwargs):
     'grid_bias_model_args':None,
     'bias_nsigma_edit':None,
     'bias_nsigma_iteration':2,
+    'bias_edit_vals':None,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -794,6 +796,18 @@ def smooth_xytb_fit(**kwargs):
                                           bias_filter=args['bias_filter'])
         setup_bias_fit(data, bias_model, G_data, constraint_op_list,
                        bias_param_name='bias_ID')
+        if args['bias_nsigma_edit']:
+            bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
+
+        if args['bias_edit_vals'] is not None:
+            edit_bias_list=np.c_[[args['bias_edit_vals'][key] for key in args['bias_edit_vals'].keys()]].T.tolist()
+            bias_list=np.c_[[bias_model['bias_param_dict'][key] for key in args['bias_edit_vals'].keys()]].T.tolist()
+            for row in edit_bias_list:
+                bias_model['bias_param_dict']['edited'][bias_list.index(row)]=True
+            # apply the editing to the three_sigma_edit variable
+            bad_IDs=[bias_model['bias_param_dict']['ID'][ii] 
+                     for ii in np.flatnonzero(bias_model['bias_param_dict']['edited'])]
+            data.three_sigma_edit[np.in1d(data.bias_ID, bad_IDs)]=False
     else:
         bias_model={}
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors'])>0:

@@ -110,6 +110,9 @@ def setup_grids(args):
         grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
     else:
         grids['dz'].cell_area=calc_cell_area(grids['dz'])
+    # last-- multiply the z0 cell area by the z0 mask
+    if grids['z0'].mask is not None:
+        grids['z0'].cell_area *= grids['z0'].mask
 
     return grids, bds
 
@@ -674,6 +677,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                         .reshape(grids[ff].shape)/m[ff].count)})
         m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\
                                          .reshape(grids[ff].shape)/m[ff].count)})
+
         if 'tide' in data.fields:
             r_notide=(data.z+np.nan_to_num(data.tide, nan=0.)-data.z_est)[data.three_sigma_edit]
             r_notide_scaled=r_notide/data.sigma[data.three_sigma_edit]
@@ -681,6 +685,11 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                         .reshape(grids[ff].shape)/m[ff].count)})
             m[ff].assign({'misfit_notide_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_notide_scaled**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
+        # convert the NaNs in the count and misfit* fields back to zeros
+        for field in ['count', 'misfit_scaled_rms', 'misfit_rms', \
+                      'misfit_notide_rms', 'misfit_notide_scaled_rms']:
+            if field in m[ff].fields:
+                setattr(m[ff], field, np.nan_to_num(getattr(m[ff], field)))
 
 def smooth_xytb_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')

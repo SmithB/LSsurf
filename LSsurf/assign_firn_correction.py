@@ -15,7 +15,7 @@ import SMBcorr
 
 #from LSsurf.interp_MAR_firn import interp_MAR_firn
 
-def assign_firn_correction(data, firn_correction, hemisphere, subset_valid=True, EXTRAPOLATE=False):
+def assign_firn_correction(data, firn_correction, hemisphere, variable='FAC', subset_valid=True, EXTRAPOLATE=False):
     # if we're rereading data, it already has the firn correction applied
     if firn_correction == 'MAR':
         if hemisphere==1:
@@ -23,17 +23,29 @@ def assign_firn_correction(data, firn_correction, hemisphere, subset_valid=True,
             data.z -= data.h_firn
     elif firn_correction == 'MERRA2_hybrid':
         if hemisphere==-1:
-            FAC = SMBcorr.interpolate_merra_hybrid('/Volumes/ice1/tyler/MERRA2_hybrid/v1', "EPSG:3031",
+            out = SMBcorr.interpolate_merra_hybrid('/Volumes/ice3/tyler/MERRA2_hybrid/v1', "EPSG:3031",
                             'ais', data.time, data.x, data.y,
-                            VERSION='v1', VARIABLE='FAC',
+                            VERSION='v1.1', VARIABLE=variable,
                             SIGMA=1.5, FILL_VALUE=np.nan)
-            bad = FAC.mask
-            if np.any(bad):
-                FAC[bad] = SMBcorr.extrapolate_merra_hybrid('/Volumes/ice1/tyler/MERRA2_hybrid/v1', "EPSG:3031",
-                            'ais', data.time[bad], data.x[bad], data.y[bad],
-                            VERSION='v1', VARIABLE='FAC',
-                            SIGMA=1.5, FILL_VALUE=np.nan, EXTRAPOLATE=EXTRAPOLATE)
-            data.assign({'h_firn':FAC})
+        else:
+            out = SMBcorr.interpolate_merra_hybrid('/Volumes/ice3/tyler/MERRA2_hybrid/v1.1', "EPSG:3413",
+                            'gris', data.time, data.x, data.y,
+                            VERSION='v1_1', VARIABLE=variable, GZIP=True,
+                            SIGMA=1.5, FILL_VALUE=np.nan)
+        bad = out.mask
+        if np.any(bad):
+            if hemisphere==-1:
+                out[bad] = SMBcorr.extrapolate_merra_hybrid('/Volumes/ice1/tyler/MERRA2_hybrid/v1', "EPSG:3031",
+                        'ais', data.time[bad], data.x[bad], data.y[bad],
+                        VERSION='v1', VARIABLE=variable,
+                        SIGMA=1.5, FILL_VALUE=np.nan, EXTRAPOLATE=EXTRAPOLATE)
+            else:
+                print({field:getattr(data, field)[bad].shape for field in ['x','y','time']})
+                out[bad] = SMBcorr.extrapolate_merra_hybrid('/Volumes/ice3/tyler/MERRA2_hybrid/v1.1', "EPSG:3413",
+                        'gris', data.time[bad], data.x[bad], data.y[bad],
+                        VERSION='v1_1', VARIABLE=variable, GZIP=True,
+                        SIGMA=1.5, FILL_VALUE=np.nan, EXTRAPOLATE=EXTRAPOLATE)
+        data.assign({'h_firn':out})
 
     elif firn_correction == 'RACMO':
         if hemisphere==1:

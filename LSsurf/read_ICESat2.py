@@ -51,7 +51,12 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         fields += ['x','y']
     else:
         fields=field_dict
-    px, py=np.meshgrid(np.arange(xy0[0]-W['x']/2, xy0[0]+W['x']/2+1.e4, 1.e4),np.arange(xy0[1]-W['y']/2, xy0[1]+W['y']/2+1.e4, 1.e4) )  
+    
+    dx=1.e4
+    bds={'x':np.r_[np.floor((xy0[0]-W['x']/2)/dx), np.ceil((xy0[0]+W['x']/2)/dx)]*dx, \
+         'y':np.r_[np.floor((xy0[1]-W['y']/2)/dx), np.ceil((xy0[1]+W['y']/2)/dx)]*dx}
+    px, py=np.meshgrid(np.arange(bds['x'][0], bds['x'][1], dx),
+                       np.arange(bds['y'][0], bds['y'][1], dx))
     D0=pc.geoIndex().from_file(gI_file).query_xy((px.ravel(), py.ravel()), fields=fields)
     if D0 is None or len(D0)==0:
         return [None]

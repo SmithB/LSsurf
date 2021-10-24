@@ -8,20 +8,26 @@ import numpy as np
 from LSsurf.fd_grid import fd_grid
 from LSsurf.lin_op import lin_op
 import scipy.sparse as sp
+import matplotlib.pyplot as plt
 from LSsurf.data_slope_bias import data_slope_bias
-from LSsurf.setup_grid_bias import setup_grid_bias
 #from LSsurf.read_CS2_data import make_test_data
 import copy
 import sparseqr
 from time import time, ctime
 from LSsurf.RDE import RDE
 from LSsurf.unique_by_rows import unique_by_rows
+import os
+import h5py
+import json
 #import LSsurf.op_structure_checks as checks
 import pointCollection as pc
+import scipy.optimize as scipyo
+from scipy.stats import scoreatpercentile
 #import scipy.sparse.linalg as spl
 #from spsolve_tr_upper import spsolve_tr_upper
 #from propagate_qz_errors import propagate_qz_errors
 from LSsurf.inv_tr_upper import inv_tr_upper
+from LSsurf.smooth_xytb_fit import setup_grids, assign_bias_ID
 
 def edit_data_by_subset_fit(N_subset, args):
 
@@ -53,7 +59,7 @@ def edit_data_by_subset_fit(N_subset, args):
         if 'subset_iterations' in args:
             sub_args['max_iterations']=args['subset_iterations']
 
-        sub_fit=smooth_xytb_fit(**sub_args)
+        sub_fit=smooth_xytb_fit_aug(**sub_args)
 
         in_tight_bounds_sub = \
             (sub_args['data'].x > x0-W_subset['x']/4) & (sub_args['data'].x < x0+W_subset['x']/4) & \
@@ -66,9 +72,9 @@ def edit_data_by_subset_fit(N_subset, args):
         print("from all subsets, found %d data" % valid_data.sum(), flush=True)
     return valid_data
 
-
-def setup_grids(args):
-    '''
+'''
+#def setup_grids(args):
+    ###
     setup the grids for the problem.
 
     Inputs:
@@ -76,9 +82,8 @@ def setup_grids(args):
         W: dictionary with entries 'x','y','t' specifying the domain width in x, y, and time
         ctr: dictionary with entries 'x','y','t' specifying the domain center in x, y, and time
         spacing: dictionary with entries 'z0','dz' and 'dt' specifying the spacing of the z0 grid, the spacing of the dz grid, and the duration of the epochs
-        srs_proj4: a proj4 string specifying the data projection       
+        srs_proj4: a proj4 string specifying the data projection
         mask_file: the mask file which has 1 for points in the domain (data will be used and strong constraints applied)
-        mask_data: pointCollection.data object containing the mask.  If this is specified, mask_file is ignored
     Outputs:
         grids: (dict) a dictionary with entries 'z0', 'dz' and 't', each containing a fd_grid object
         bds: (dict) a dictionary specifying the domain bounds in x, y, and t (2-element vector for each)
@@ -86,36 +91,23 @@ def setup_grids(args):
     Each grid has an assigned location to which its points are mapped in the solution vector.  In this
 
     From left to right, the grids are z0, then dz
-    '''
+    ###
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
-    if args['mask_data'] is not None:
-        mask_file = None
-    else:
-        mask_file=args['mask_file']
-        
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
-         mask_data=args['mask_data'])
-    
+         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
          name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-         mask_file=mask_file, mask_data=args['mask_data'])
+        mask_file=args['mask_file'])
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
-    if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
-        grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
-    else:
-        grids['dz'].cell_area=calc_cell_area(grids['dz'])
-    # last-- multiply the z0 cell area by the z0 mask
-    if grids['z0'].mask is not None:
-        grids['z0'].cell_area *= grids['z0'].mask
+    grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
 
     return grids, bds
-
+'''
 def setup_mask(data, grids, valid_data, bds, args):
     '''
     Mark datapoints for which the mask is zero as invalid
@@ -127,14 +119,14 @@ def setup_mask(data, grids, valid_data, bds, args):
 
     '''
 
-    temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'], mask_data=args['mask_data'])
+    temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'])
     data_mask=lin_op(temp, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['z0'].mask.ravel())
     data_mask[~np.isfinite(data_mask)]=0
     if np.any(data_mask==0):
         data.index(~(data_mask==0))
         valid_data[valid_data]= ~(data_mask==0)
 
-
+'''
 def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, bias_filter=None, bias_model=None):
     """
     Assign a value to each data point that determines which biases are applied to it.
@@ -187,7 +179,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
             bias_model['E_bias'][p0+p_num]=np.nanmedian(data.sigma_corr[this_ind])
     data.assign({bias_name:bias_ID})
     return data, bias_model
-
+'''
 def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
                        bias_param_name='data_bias', op_name='data_bias'):
     """
@@ -217,8 +209,6 @@ def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
         bias_model['bias_ID_dict'][key]['col']=col_0+key
     # the confidence for each bias parameter being zero is in bias_model['E_bias']
     Gc_bias.expected=np.array([bias_model['E_bias'][ind] for ind in ii])
-    if np.any(Gc_bias.expected==0):
-        raise(ValueError('found an zero value in the expected biases'))
     constraint_op_list.append(Gc_bias)
     G_data.add(G_bias)
 
@@ -257,8 +247,7 @@ def setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args):
     '''
     grids['PS_bias']=fd_grid( [bds['y'], bds['x']], \
        [args['spacing']['dz'], args['spacing']['dz']],\
-       name='PS_bias', srs_proj4=args['srs_proj4'],\
-       mask_file=args['mask_file'], mask_data=args['mask_data'], \
+       name='PS_bias', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'], \
        col_0=grids['dz'].col_N)
     ps_mtx=lin_op(grid=grids['PS_bias'], name='PS_bias').\
         interp_mtx(data.coords()[0:2])
@@ -297,7 +286,6 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
     root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
     grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
     grad2_z0.expected=E_RMS['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(mask_scale)
-    
     constraint_op_list += [grad2_z0]
     if 'dz0_dx' in E_RMS:
         grad_z0=lin_op(grids['z0'], name='grad_z0').grad(DOF='z0')
@@ -318,9 +306,6 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
         d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
         d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + E_RMS['d2z_dt2']/root_delta_V_dz
         constraint_op_list += [d2z_dt2]
-    for constraint in constraint_op_list:
-        if np.any(constraint.expected==0):
-            raise(ValueError(f'found zero value in the expected values for {constraint.name}'))
 
 def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None, taper=True):
     # calculate the area of masked cells in a coarse grid within the cells of a fine grid
@@ -336,48 +321,23 @@ def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None,
 
 def calc_cell_area(grid):
     xg, yg = np.meshgrid(grid.ctrs[1], grid.ctrs[0])
-    if grid.srs_proj4 is not None:
-        lat=pc.data().from_dict({'x':xg, 'y':yg}).get_latlon(proj4_string=grid.srs_proj4).latitude
-        return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
-    else:
-        return np.ones(grid.shape[0:2])*grid.delta[0]*grid.delta[1]
-
-#def sym_range(N, ni, offset=0.5):
-#    out=np.arange(int(ni*offset), int(N/2), int(ni))
-#    if offset==0:
-#        out=np.r_[-out[-1:0:-1], out]+int(np.floor(N/2))
-#    else:
-#        out=np.r_[-out[-1::-1], out]+int(np.floor(N/2))
-#    out=out[np.abs(out-N/2)<= N/2-ni/2]
-#    return out
-
-def sym_range(N, ni, offset=0.5):
-    # calculate a range of indices that are symmetric WRT the center of a grid
-    out=np.arange((ni*offset), (N/2), (ni))
-    if offset==0:
-        out=np.r_[-out[-1:0:-1], out]+int(np.floor(N/2))
-    else:
-        out=np.r_[-out[-1::-1], out]+int(np.floor(N/2))
-    out=np.floor(out[np.abs(out-N/2)<= N/2-ni/2]).astype(int)
-    return out
+    lat=pc.data().from_dict({'x':xg, 'y':yg}).get_latlon(proj4_string=grid.srs_proj4).latitude
+    return pc.ps_scale_for_lat(lat)**2*grid.delta[0]*grid.delta[1]
 
 def setup_averaging_ops(grid, col_N, args, cell_area=None):
     # build operators that take the average of of the delta-z grid at large scales.
     # these get used both in the averaging and error-calculation codes
 
     ops={}
-    if args['dzdt_lags'] is not None:
-        # build the not-averaged dz/dt operators (these are not masked)
-        for lag in args['dzdt_lags']:
-            this_name='dzdt_lag'+str(lag)
-            op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
-            op.dst_grid.cell_area=grid.cell_area
-            ops[this_name]=op
+    # build the not-averaged dz/dt operators (these are not masked)
+    for lag in args['dzdt_lags']:
+        this_name='dzdt_lag'+str(lag)
+        op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
+        op.dst_grid.cell_area=grid.cell_area
+        ops[this_name]=op
 
     # make the averaged ops
     if args['avg_scales'] is None:
-        return ops
-    if args['dzdt_lags'] is None:
         return ops
 
     N_grid=[ctrs.size for ctrs in grid.ctrs]
@@ -386,18 +346,17 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
         kernel_N=np.floor(np.array([scale/dd for dd in grid.delta[0:2]]+[1])).astype(int)
 
         # subscripts for the centers of the averaged areas
-        # assume that the largest averaging offset takes the mean of the center
-        # of the grid.  Otherwise, center the cells on odd muliples of the grid
-        # spacing
-        if scale==np.max(args['avg_scales']):
-            offset=0
+        N_ctrs=[int(np.floor(N_grid[ii]/kernel_N[ii])) for ii in range(len(N_grid))]
+        if N_ctrs[0] > 2 : #np.mod(np.log2(np.floor(N_ctrs[0])),2)==0:
+            # Normally want grid centers centered on kernel_N/2
+            grid_ctr_subs=[np.arange(kernel_N[0]/2, grid.shape[0]-kernel_N[0]/2+1, kernel_N[0], dtype=int),
+                                   np.arange(kernel_N[1]/2, grid.shape[1]-kernel_N[1]/2+1, kernel_N[1], dtype=int),
+                                   np.arange(grid.shape[2], dtype=int)]
         else:
-            offset=0.5
-
-        grid_ctr_subs=[sym_range(N_grid[0], kernel_N[0], offset=offset),
-                       sym_range(N_grid[1], kernel_N[1], offset=offset),
-                       np.arange(grid.shape[2], dtype=int)]
-
+            # For the N_ctrs=2 grid, want the central portion of the domain (the edges will be trimmed)
+            grid_ctr_subs = [np.arange(1, N_ctrs[0], dtype=int)*kernel_N[0], \
+                         np.arange(1, N_ctrs[1], dtype=int)*kernel_N[1], \
+                             np.arange(grid.shape[2], dtype=int)]
         sub0s = np.meshgrid(*grid_ctr_subs, indexing='ij')
 
         # make the operator
@@ -438,37 +397,115 @@ def setup_avg_mask_ops(grid, col_N, avg_masks, dzdt_lags):
     avg_ops={}
     for name, mask in avg_masks.items():
         this_name=name+'_avg_dz'
-        avg_ops[this_name] = lin_op(grid, col_N=col_N, name=this_name).mean_of_mask(mask, dzdt_lag=None)
+        
+        try:
+            avg_ops[this_name] = lin_op(grid, col_N=col_N, name=this_name).mean_of_mask(mask, dzdt_lag=None)
+        except ValueError:
+            pass
         for lag in dzdt_lags:
             this_name=name+f'_avg_dzdt_lag{lag}'
-            avg_ops[this_name] = lin_op(grid, col_N=col_N,name=this_name).mean_of_mask(mask, dzdt_lag=lag)
+            try:
+                avg_ops[this_name] = lin_op(grid, col_N=col_N,name=this_name).mean_of_mask(mask, dzdt_lag=lag)
+            except ValueError:
+                pass
     return avg_ops
 
 def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     m1 = m0.copy()
     m1[G_data.TOC['cols']['z0']]=0
     r_DEM=data.z - G_data.toCSR().dot(m1) - data.DEM
-    return in_TSE[np.abs(r_DEM[in_TSE]-np.nanmedian(r_DEM[in_TSE]))<DEM_tol]
+    temp=in_TSE
+    temp[in_TSE] = np.abs(r_DEM[in_TSE]) < DEM_tol
+    return temp
 
-def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
+def calc_sigma_extra(r, sigma):
+    '''
+    calculate the error needed to be added to the data to achieve RDE(rs)==1
+
+    Parameters
+    ----------
+    r : numpy array
+        model residuals
+    sigma : numpy array
+        estimated errors
+
+    Returns
+    -------
+    sigma_extra.
+
+    '''
+    sigma_hat=RDE(r)
+    sigma_aug_minus_1_sq = lambda sigma1: (RDE(r/np.sqrt(sigma1**2+sigma**2))-1)**2
+    sigma_extra=scipyo.minimize_scalar(sigma_aug_minus_1_sq, method='bounded', bounds=[0, sigma_hat])['x']
+    return sigma_extra
+
+def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
+
+    if args['bias_nsigma_edit'] is None:
+        return False
+    
+    # assign the edited field in bias_model['bias_param_dict'] if needed
+    if 'edited' not in bias_model['bias_param_dict']:
+            bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
+    bias_dict, slope_bias_dict=parse_biases(m0, bias_model, args['bias_params'])
+    bias_scaled = np.abs(bias_dict['val']) / np.array(bias_dict['expected'])
+    
+    last_edit = bias_model['bias_param_dict']['edited'].copy()
+    bad_bias = np.zeros_like(bias_scaled, dtype=bool)
+    bad_bias |= last_edit
+    if iteration >= args['bias_nsigma_iteration']:
+        extreme_bias_scaled_threshold = 3*scoreatpercentile(bias_scaled, 95)
+        if np.any(bias_scaled > extreme_bias_scaled_threshold):
+            bad_bias[ bias_scaled == np.max(bias_scaled) ] = True
+        else:
+            bad_bias[bias_scaled > args['bias_nsigma_edit']] = True
+
+    bad_bias_IDs=np.array(bias_dict['ID'])[bad_bias]
+
+    for ID in bad_bias_IDs:
+        #Mark each bad ID as edited (because it will have a bias estimate of zero in subsequent iterations)
+        bias_model['bias_param_dict']['edited'][bias_model['bias_param_dict']['ID'].index(ID)]=True
+    if len(bad_bias_IDs)>0:
+        print(f"\t have {len(bad_bias_IDs)} bad biases, with {np.sum(np.in1d(data.bias_ID, bad_bias_IDs))} data.")
+    in_TSE[np.in1d(data.bias_ID, bad_bias_IDs)]=False
+    
+    return  ~np.all(bias_model['bias_param_dict']['edited'] == last_edit)
+
+def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                 bias_model=None):
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
+    E_all = 1/TCinv.diagonal()
+    
+    # run edit_by_bias to zero out the edited IDs
+    edit_by_bias(data, np.zeros(Ip_c.shape[0]), in_TSE, -1, bias_model, args)
 
-    # save the original state of the in_TSE variable so that we can force the non-editable
-    # TSE values to remain in their original state
+    #print(f"iterate_fit: G.shape={Gcoo.shape}, G.nnz={Gcoo.nnz}, data.shape={data.shape}", flush=True)
     in_TSE_original=np.zeros(data.shape, dtype=bool)
     in_TSE_original[in_TSE]=True
 
-    min_tse_iterations=2
-    if args['bias_nsigma_iteration'] is not None:
-        min_tse_iterations=np.max([min_tse_iterations, args['bias_nsigma_iteration']+1])
-
+    sigma_extra_pre=0
+    sigma_extra=0
+    if 'tide_ocean' in data.fields:
+        early_shelf = (data.time < 2009) & (data.tide_ocean != 0)
+    else:
+        early_shelf=np.zeros_like(data.x, dtype=bool)
+    not_early_shelf = ~early_shelf
+    N_eq = Gcoo.shape[0]
+    last_iteration = False
     for iteration in range(args['max_iterations']):
+        
+        # augment the errors on the shelf
+        E2_plus=E_all**2
+        E2_plus[np.nonzero(early_shelf)] += sigma_extra_pre**2
+        if last_iteration:
+            E2_plus[np.nonzero(not_early_shelf)] += sigma_extra**2
+        TCinv=sp.dia_matrix((1./np.sqrt(E2_plus),0), shape=(N_eq, N_eq))
+
         # build the parsing matrix that removes invalid rows
-        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+in_TSE.size), \
-                            (np.arange(Gc.N_eq+in_TSE.size), \
-                             np.concatenate((in_TSE, cov_rows)))), \
-                           shape=(Gc.N_eq+in_TSE.size, Gcoo.shape[0])).tocsc()
+        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+in_TSE.sum()), \
+                            (np.arange(Gc.N_eq+in_TSE.sum()), \
+                             np.concatenate((np.flatnonzero(in_TSE), cov_rows)))), \
+                           shape=(Gc.N_eq+in_TSE.sum(), Gcoo.shape[0])).tocsc()
 
         m0_last = np.zeros(Ip_c.shape[0])
 
@@ -480,38 +517,28 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
-        rs_data=(data.z-G_data.toCSR().dot(m0))/data.sigma
-        # calculate the robust standard deviation of the scaled residuals for the selected data
-        sigma_hat=RDE(rs_data[in_TSE])
-
+        r_data=data.z-G_data.toCSR().dot(m0)
+        rs_data=r_data/data.sigma
+        if last_iteration:
+            break
+        # calculate the additional error needed to make the robust spread of the scaled residuals equal to 1
+        sigma_extra_pre=calc_sigma_extra(r_data[in_TSE & early_shelf], data.sigma[in_TSE & early_shelf])
+        sigma_extra=calc_sigma_extra(r_data[in_TSE & not_early_shelf], data.sigma[in_TSE & not_early_shelf])
+        # augmented sigma
+        sigma_aug2 = data.sigma**2
+        sigma_aug2[early_shelf] += sigma_extra_pre**2
+        sigma_aug2[not_early_shelf] += sigma_extra**2
+        sigma_aug=np.sqrt(sigma_aug2)
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
-        in_TSE = (np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
+
+        in_TSE = np.abs(r_data/sigma_aug) < 3.0
         
         # if bias_nsigma_edit is specified, check for biases that are more than
-        # args['bias_nsigma_edit'] times their expected values.  
-        if  args['bias_nsigma_edit'] is not None and iteration >= args['bias_nsigma_iteration']:
-            if 'edited' not in bias_model['bias_param_dict']:
-                bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
-            bias_dict, slope_bias_dict=parse_biases(m0, bias_model, args['bias_params'])
-            bad_bias_IDs=np.array(bias_dict['ID'])\
-                [(np.abs(bias_dict['val']) > args['bias_nsigma_edit'] * np.array(bias_dict['expected'])\
-                                                                      * np.maximum(1, sigma_hat)) \
-                 | bias_model['bias_param_dict']['edited']]
-            print(bad_bias_IDs)
-            for ID in bad_bias_IDs:
-                #mask=np.ones(data.size, dtype=bool)
-                #Mark the ID as edited (because it will have a bias estimate of zero in subsequent iterations)
-                bias_model['bias_param_dict']['edited'][bias_model['bias_param_dict']['ID'].index(ID)]=True
-            in_TSE[np.in1d(data.bias_ID, bad_bias_IDs)]=False
-                # mark all data associated with the ID as invalid
-                #for field, field_val in bias_model['bias_ID_dict'][ID].items():
-                #    if field in data.fields:
-                #        mask &= (getattr(data, field).ravel()==field_val)
-                #in_TSE[mask==1]=0
+        # args['bias_nsigma_edit'] times their expected values.
+        bias_editing_changed=edit_by_bias(data, m0, in_TSE, iteration, bias_model, args)
         if 'editable' in data.fields:
             in_TSE[data.editable==0] = in_TSE_original[data.editable==0]
-        in_TSE = np.flatnonzero(in_TSE)
 
         if args['DEM_tol'] is not None:
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
@@ -520,21 +547,24 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
         if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > 2):
             if args['VERBOSE']:
                 print("Solution identical to previous iteration with tolerance %3.1f, exiting after iteration %d" % (args['converge_tol_dz'], iteration))
-            break
+            last_iteration = True
         # select the data that are within 3*sigma of the solution
         if args['VERBOSE']:
-            print('found %d in TSE, sigma_hat=%3.3f, dt=%3.0f' % ( in_TSE.size, sigma_hat, timing['sparseqr_solve']), flush=True)
-        if iteration > 0:
-            if in_TSE.size == in_TSE_last.size and np.all( in_TSE_last == in_TSE ):
+            print('found %d in TSE, sigma_extra_pre = %3.3f, sigma_extra=%3.3f,  dt=%3.0f' % ( in_TSE.sum(), sigma_extra_pre, sigma_extra, timing['sparseqr_solve']), flush=True)
+        if iteration > 0  and iteration > args['bias_nsigma_iteration']:
+            if np.all( in_TSE_last == in_TSE ):
                 if args['VERBOSE']:
                     print("filtering unchanged, exiting after iteration %d" % iteration)
-                break
-        if iteration >= min_tse_iterations:
-            if sigma_hat <= 1:
+                last_iteration=True
+        if iteration >= np.maximum(2, args['bias_nsigma_iteration']+1):
+            if sigma_extra < 0.5 *np.min(data.sigma[in_TSE]) and not bias_editing_changed:
                 if args['VERBOSE']:
-                    print("sigma_hat LT 1, exiting after iteration %d" % iteration, flush=True)
-                break
-    return m0, sigma_hat, in_TSE, in_TSE_last, rs_data
+                    print("sigma_0==0, exiting after iteration %d" % iteration, flush=True)
+                last_iteration=True
+        if iteration==args['max_iterations']-2:
+            last_iteration=True
+    
+    return m0, sigma_extra, in_TSE, rs_data
 
 def parse_biases(m, bias_model, bias_params):
     """
@@ -545,7 +575,8 @@ def parse_biases(m, bias_model, bias_params):
             bias_model: the bias model
             bias_params: a list of parameters for which biases are calculated
         output:
-            b__dict: a dictionary giving the parameters and associated bias values for each ibas ID
+            b_dict: a dictionary giving the parameters and associated bias values for each ibas ID
+            slope_bias_dict:  a dictionary giving the parameters and assicated biase values for each slope bias ID
     """
     slope_bias_dict={}
     b_dict={param:list() for param in bias_params+['val','ID','expected']}
@@ -557,12 +588,11 @@ def parse_biases(m, bias_model, bias_params):
         for param in bias_params:
             b_dict[param].append(bias_model['bias_ID_dict'][item][param])
     if 'slope_bias_dict' in bias_model:
-
         for key in bias_model['slope_bias_dict']:
             slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
     return b_dict, slope_bias_dict
 
-def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_scale=1):
+def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_res_scale=None):
     tic=time()
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
     z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
@@ -582,9 +612,6 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
     tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
-
-    # if a scaling for the errors has been provided, mutliply E0 by it
-    E0 *= error_scale
 
     # generate the full E vector.  E0 appears to be an ndarray,
     E0=np.array(Ip_c.dot(E0)).ravel()
@@ -607,7 +634,6 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     if len(bias_model.keys()) >0:
         E['sigma_bias'], E['sigma_slope_bias'] = parse_biases(E0, bias_model, bias_params)
 
-
 def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args):
 
     # reshape the components of m to the grid shapes
@@ -622,18 +648,8 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                      'cell_area':grids['dz'].cell_area, \
                                      'mask':grids['dz'].mask, \
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape)})
-
-    if args['grid_bias_model_args'] is not None:
-        m['grid_biases']={}
-        for temp in args['grid_bias_model_args']:
-            this_grid=temp['grid']
-            m['grid_biases'][this_grid.name]=pc.grid.data().from_dict({
-                'x': this_grid.ctrs[1],
-                'y': this_grid.ctrs[0], 
-                this_grid.name:np.reshape(m0[this_grid.col_0:this_grid.col_N], this_grid.shape)})
-
-    #if 'PS_bias' in G_data.TOC['cols']:
-    #    m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
+    if 'PS_bias' in G_data.TOC['cols']:
+        m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
 
     # calculate height rates and averages
     for key, op  in averaging_ops.items():
@@ -654,11 +670,6 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
 
     # parse the resduals to assess the contributions of the total error:
-
-    # calculate the data residuals
-    R['data']=np.sum((((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])/data.sigma[data.three_sigma_edit==1])**2))
-    RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
-
     # Make the C matrix for the constraints
     TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
     # scaled residuals
@@ -679,26 +690,19 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                         .reshape(grids[ff].shape)/m[ff].count)})
         m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\
                                          .reshape(grids[ff].shape)/m[ff].count)})
-
         if 'tide' in data.fields:
-            r_notide=(data.z+np.nan_to_num(data.tide, nan=0.)-data.z_est)[data.three_sigma_edit]
+            r_notide=(data.z+data.tide-data.z_est)[data.three_sigma_edit]
             r_notide_scaled=r_notide/data.sigma[data.three_sigma_edit]
             m[ff].assign({'misfit_notide_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_notide**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
             m[ff].assign({'misfit_notide_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_notide_scaled**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
-        # convert the NaNs in the count and misfit* fields back to zeros
-        for field in ['count', 'misfit_scaled_rms', 'misfit_rms', \
-                      'misfit_notide_rms', 'misfit_notide_scaled_rms']:
-            if field in m[ff].fields:
-                setattr(m[ff], field, np.nan_to_num(getattr(m[ff], field)))
 
-def smooth_xytb_fit(**kwargs):
+def smooth_xytb_fit_aug(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
     args={'reference_epoch':0,
     'W_ctr':1e4,
     'mask_file':None,
-    'mask_data':None,
     'mask_scale':None,
     'compute_E':False,
     'max_iterations':10,
@@ -711,7 +715,7 @@ def smooth_xytb_fit(**kwargs):
     'DEM_tol':None,
     'repeat_dt': 1,
     'Edit_only': False,
-    'dzdt_lags':None,
+    'dzdt_lags':[1, 4],
     'avg_scales':[],
     'data_slope_sensors':None,
     'E_slope':0.05,
@@ -719,10 +723,10 @@ def smooth_xytb_fit(**kwargs):
     'E_RMS_PS_bias':None,
     'error_res_scale':None,
     'avg_masks':None,
-    'grid_bias_model_args':None,
     'bias_nsigma_edit':None,
     'bias_nsigma_iteration':2,
     'bias_edit_vals':None,
+    'mask_data':None,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -741,12 +745,10 @@ def smooth_xytb_fit(**kwargs):
     E={}
     R={}
     RMS={}
+
     tic=time()
     # define the grids
     grids, bds = setup_grids(args)
-
-    #print("\nstarting smooth_xytb_fit")
-    #summarize_time(args['data'], grids['dz'].ctrs[2], np.ones(args['data'].shape, dtype=bool))
 
     # select only the data points that are within the grid bounds
     valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
@@ -755,24 +757,19 @@ def smooth_xytb_fit(**kwargs):
 
     if not np.any(valid_data):
         if args['VERBOSE']:
-            print("smooth_xytb_fit: no valid data")
+            print("smooth_xytb_fit_aug: no valid data")
         return {'m':m, 'E':E, 'data':None, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # subset the data based on the valid mask
     data=args['data'].copy_subset(valid_data)
 
-    #print("\n\nafter validation")
-    #summarize_time(data, grids['dz'].ctrs[2], np.ones(data.shape, dtype=bool))
-
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
-    if args['mask_file'] is not None or args['mask_data'] is not None:
+    if args['mask_file'] is not None:
         setup_mask(data, grids, valid_data, bds, args)
 
     # Check if we have any data.  If not, quit
     if data.size==0:
-        if args['VERBOSE']:
-            print("smooth_xytb_fit: no valid data")
         return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # define the interpolation operator, equal to the sum of the dz and z0 operators
@@ -782,14 +779,9 @@ def smooth_xytb_fit(**kwargs):
     # define the smoothness constraints
     constraint_op_list=[]
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'], args['mask_scale'])
-    
-    # setup the smooth biases
-    if args['grid_bias_model_args'] is not None:
-        for bm_args in args['grid_bias_model_args']:
-            setup_grid_bias(data, G_data, constraint_op_list, grids, **bm_args)
-    
-    #if args['E_RMS_d2x_PS_bias'] is not None:
-    #    setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
+
+    if args['E_RMS_d2x_PS_bias'] is not None:
+        setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
 
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
@@ -828,15 +820,12 @@ def smooth_xytb_fit(**kwargs):
         try:
             Ec[Gc.TOC['rows'][op.name]]=op.expected
         except ValueError as E:
-            print("smooth_xytb_fit:\n\t\tproblem with "+op.name)
+            print("smooth_xytb_fit_aug:\n\t\tproblem with "+op.name)
             raise(E)
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
         Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
     Ed=data.sigma.ravel()
-    if np.any(Ed==0):
-        raise(ValueError('zero value found in data sigma'))
-    if np.any(Ec==0):
-        raise(ValueError('zero value found in constraint sigma'))
+
     #print({op.name:[Ec[Gc.TOC['rows'][op.name]].min(),  Ec[Gc.TOC['rows'][op.name]].max()] for op in constraint_op_list})
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))
@@ -849,9 +838,8 @@ def smooth_xytb_fit(**kwargs):
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
 
     # setup operators that take averages of the grid at different scales
-    averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args, cell_area=grids['dz'].cell_area)
+    averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args)
 
-    print(averaging_ops.keys())
     # setup masked averaging ops
     averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 
@@ -864,50 +852,51 @@ def smooth_xytb_fit(**kwargs):
 
     # initialize the book-keeping matrices for the inversion
     if "three_sigma_edit" in data.fields:
-        in_TSE=np.flatnonzero(data.three_sigma_edit)
+        in_TSE=data.three_sigma_edit > 0.01
     else:
-        in_TSE=np.arange(G_data.N_eq, dtype=int)
-    in_TSE_last = np.zeros([0])
+        in_TSE=np.ones(G_data.N_eq, dtype=bool)
+
     if args['VERBOSE']:
         print("initial: %d:" % G_data.r.max(), flush=True)
 
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:
         tic_iteration=time()
-        m0, sigma_hat, in_TSE, in_TSE_last, rs_data=iterate_fit(data, Gcoo, rhs, \
-                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, args, \
-                                    bias_model=bias_model)
+        m0, sigma_extra, in_TSE, rs_data=iterate_fit(data, Gcoo, rhs, \
+                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
+                                bias_model=bias_model)
 
         timing['iteration']=time()-tic_iteration
-        # in_TSE_last is the list of points in the last inversion step
-        # this needs to be converted from a list of data to a boolean array
-        in_TSE=in_TSE_last
-        data.assign({'three_sigma_edit':np.zeros_like(data.x, dtype=bool)})
-        data.three_sigma_edit[in_TSE]=1
-        # copy this into the valid_data array
-        valid_data[valid_data]=data.three_sigma_edit
-
+        valid_data[valid_data]=in_TSE
+        data.assign({'three_sigma_edit':in_TSE})
+        
         # report the model-based estimate of the data points
         data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
-        # reshapethe model vector into the grid outputs
         parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
+        r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
+        R['data']=np.sum(((r_data/data.sigma[data.three_sigma_edit==1])**2))
+        RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
 
     # Compute the error in the solution if requested
     if args['compute_E']:
+        r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
+        sigma_extra=calc_sigma_extra(r_data, data.sigma[data.three_sigma_edit==0])
+
+        # rebuild TCinv to take into account the extra error
+        TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))
+
         # We have generally not done any iterations at this point, so need to make the Ip_r matrix
         cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
-        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+in_TSE.size), (np.arange(Gc.N_eq+in_TSE.size), np.concatenate((in_TSE, cov_rows)))), \
-                           shape=(Gc.N_eq+in_TSE.size, Gcoo.shape[0])).tocsc()
+        Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+in_TSE.sum()), \
+                           (np.arange(Gc.N_eq+in_TSE.sum()), \
+                            np.concatenate((np.flatnonzero(in_TSE), cov_rows)))), \
+                           shape=(Gc.N_eq+in_TSE.sum(), Gcoo.shape[0])).tocsc()
         if args['VERBOSE']:
             print("Starting uncertainty calculation", flush=True)
             tic_error=time()
-        # recalculate the error scaling from the misfits
-        rs=(data.z_est-data.z)/data.sigma
-        error_scale=RDE(rs[data.three_sigma_edit==1])
-        print(f"scaling uncertainties by {error_scale}")
         calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, averaging_ops, \
                          bias_model, args['bias_params'], dzdt_lags=args['dzdt_lags'], timing=timing, \
-                             error_scale=error_scale)
+                             error_res_scale=args['error_res_scale'])
         if args['VERBOSE']:
             print("\tUncertainty propagation took %3.2f seconds" % (time()-tic_error), flush=True)
 
@@ -933,22 +922,12 @@ def main():
     SRS_proj4='+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs '
     spacing={'z0':50, 'dz':50, 'dt':0.25}
 
-    S=smooth_xytb_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS,
+    S=smooth_xytb_fit_aug(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS,
                      reference_epoch=2, N_subset=None, compute_E=False,
                      max_iterations=2,
                      srs_proj4=SRS_proj4, VERBOSE=True, dzdt_lags=[1])
     return S
 
-
-def summarize_time(data, t0, ind):
-    if 't' in data.fields:
-        t=data.t
-
-    if 'time' in data.fields:
-        t=data.time
-    for ti in range(len(t0)-1):
-        N=np.sum((t[ind]>t0[ti]) & (t[ind]<t0[ti+1]))
-        print(f"{t0[ti]} to {t0[ti+1]}: {N}")
 
 if __name__=='__main__':
     main()

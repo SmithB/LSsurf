@@ -13,7 +13,7 @@ from LSsurf.setup_grid_bias import setup_grid_bias
 #from LSsurf.read_CS2_data import make_test_data
 import copy
 import sparseqr
-from time import time, ctime
+from time import time, ctime, sleep
 from LSsurf.RDE import RDE
 from LSsurf.unique_by_rows import unique_by_rows
 #import LSsurf.op_structure_checks as checks
@@ -475,9 +475,16 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
         if args['VERBOSE']:
             print("starting qr solve for iteration %d at %s" % (iteration, ctime()), flush=True)
         # solve the equations
-        tic=time();
-        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs))));
-        timing['sparseqr_solve']=time()-tic
+        solved=False
+        while not solved:
+            try:
+                tic=time();
+                m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs))));
+                timing['sparseqr_solve']=time()-tic
+                solved=True
+            except TypeError:
+                print("smooth_xytb_fit: spareqr.solve failed, probably because of memory.  Retrying after 5 minutes")
+                sleep(300)
 
         # calculate the full data residual
         rs_data=(data.z-G_data.toCSR().dot(m0))/data.sigma

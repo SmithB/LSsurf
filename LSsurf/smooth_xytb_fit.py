@@ -463,14 +463,13 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
     if args['bias_nsigma_iteration'] is not None:
         min_tse_iterations=np.max([min_tse_iterations, args['bias_nsigma_iteration']+1])
 
+    m0_last = np.zeros(Ip_c.shape[0])
     for iteration in range(args['max_iterations']):
         # build the parsing matrix that removes invalid rows
         Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+in_TSE.size), \
                             (np.arange(Gc.N_eq+in_TSE.size), \
                              np.concatenate((in_TSE, cov_rows)))), \
                            shape=(Gc.N_eq+in_TSE.size, Gcoo.shape[0])).tocsc()
-
-        m0_last = np.zeros(Ip_c.shape[0])
 
         if args['VERBOSE']:
             print("starting qr solve for iteration %d at %s" % (iteration, ctime()), flush=True)
@@ -518,19 +517,31 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
                 #in_TSE[mask==1]=0
         if 'editable' in data.fields:
             in_TSE[data.editable==0] = in_TSE_original[data.editable==0]
+            N_editable=np.sum(data.editable==1).astype(float)
+        else:
+            N_editable=data.x.size
         in_TSE = np.flatnonzero(in_TSE)
 
         if args['DEM_tol'] is not None:
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
+        
+        max_model_change=np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']]))
+        # Calculate the number of elements that have changed in in_TSE
+        frac_edit_change=len(np.setxor1d(in_TSE, in_TSE_last, assume_unique=True))/N_editable
 
-        # quit if the solution is too similar to the previous solution
-        if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > 2):
-            if args['VERBOSE']:
-                print("Solution identical to previous iteration with tolerance %3.1f, exiting after iteration %d" % (args['converge_tol_dz'], iteration))
-            break
-        # select the data that are within 3*sigma of the solution
         if args['VERBOSE']:
-            print('found %d in TSE, sigma_hat=%3.3f, dt=%3.0f' % ( in_TSE.size, sigma_hat, timing['sparseqr_solve']), flush=True)
+            print('found %d in TSE, sigma_hat=%3.3f, dm_max=%3.3f, dt=%3.0f' % ( in_TSE.size, sigma_hat, max_model_change, timing['sparseqr_solve']), flush=True)
+        # quit if the solution is too similar to the previous solution
+        if (iteration > np.maximum(2, args['bias_nsigma_iteration'])):
+            if (max_model_change < args['converge_tol_dz']):
+                if args['VERBOSE']:
+                    print("Solution identical to previous iteration with tolerance %3.2f, exiting after iteration %d" % (args['converge_tol_dz'], iteration))
+                break
+            if frac_edit_change < args['converge_tol_frac_edit']:
+                if args['VERBOSE']:
+                    print("Editing identical to previous iteration with tolerance %3.2f, exiting after iteration %d" % (args['converge_tol_frac_edit'], iteration))
+                break
+
         if iteration > 0:
             if in_TSE.size == in_TSE_last.size and np.all( in_TSE_last == in_TSE ):
                 if args['VERBOSE']:
@@ -541,6 +552,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
                 if args['VERBOSE']:
                     print("sigma_hat LT 1, exiting after iteration %d" % iteration, flush=True)
                 break
+        m0_last=m0
     return m0, sigma_hat, in_TSE, in_TSE_last, rs_data
 
 def parse_biases(m, bias_model, bias_params):
@@ -715,6 +727,7 @@ def smooth_xytb_fit(**kwargs):
     'bias_filter':None,
     'repeat_res':None,
     'converge_tol_dz':0.05,
+    'converge_tol_frac_edit':0,
     'DEM_tol':None,
     'repeat_dt': 1,
     'Edit_only': False,

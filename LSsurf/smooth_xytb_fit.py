@@ -463,7 +463,18 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
     if args['bias_nsigma_iteration'] is not None:
         min_tse_iterations=np.max([min_tse_iterations, args['bias_nsigma_iteration']+1])
 
+<<<<<<< HEAD
     m0_last = np.zeros(Ip_c.shape[0])
+=======
+    if 'editable' in data.fields:
+        N_editable=np.sum(data.editable)
+    else:
+        N_editable=data.size
+
+    #initialize m0, so that we have a value for a previous iteration
+    m0 = np.zeros(Ip_c.shape[0])
+
+>>>>>>> LSsurf/smooth_xytb_fit.py : fixed convergence tolerance code structure and reporting
     for iteration in range(args['max_iterations']):
         # build the parsing matrix that removes invalid rows
         Ip_r=sp.coo_matrix((np.ones(Gc.N_eq+in_TSE.size), \
@@ -474,6 +485,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
         if args['VERBOSE']:
             print("starting qr solve for iteration %d at %s" % (iteration, ctime()), flush=True)
         # solve the equations
+<<<<<<< HEAD
         solved=False
         while not solved:
             try:
@@ -484,6 +496,12 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
             except TypeError:
                 print("smooth_xytb_fit: spareqr.solve failed, probably because of memory.  Retrying after 5 minutes")
                 sleep(300)
+=======
+        tic=time();
+        m0_last=m0
+        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs))));
+        timing['sparseqr_solve']=time()-tic
+>>>>>>> LSsurf/smooth_xytb_fit.py : fixed convergence tolerance code structure and reporting
 
         # calculate the full data residual
         rs_data=(data.z-G_data.toCSR().dot(m0))/data.sigma
@@ -529,6 +547,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
         # Calculate the number of elements that have changed in in_TSE
         frac_edit_change=len(np.setxor1d(in_TSE, in_TSE_last, assume_unique=True))/N_editable
 
+<<<<<<< HEAD
         if args['VERBOSE']:
             print('found %d in TSE, sigma_hat=%3.3f, dm_max=%3.3f, dt=%3.0f' % ( in_TSE.size, sigma_hat, max_model_change, timing['sparseqr_solve']), flush=True)
         # quit if the solution is too similar to the previous solution
@@ -542,10 +561,25 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
                     print("Editing identical to previous iteration with tolerance %3.2f, exiting after iteration %d" % (args['converge_tol_frac_edit'], iteration))
                 break
 
+=======
+        # quit if the solution is too similar to the previous solution
+        max_model_change_dz=np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']]))
+
+        if args['VERBOSE']:
+            print('found %d in TSE, sigma_hat=%3.3f, max_dm=%3.5f, dt=%3.0f' % ( in_TSE.size, sigma_hat, max_model_change_dz, timing['sparseqr_solve']), flush=True)
+
+        if ( max_model_change_dz < args['converge_tol_dz']) and (iteration > 2):
+            if args['VERBOSE']:
+                print("Solution identical to previous iteration with tolerance %3.1f, exiting after iteration %d" % (args['converge_tol_dz'], iteration))
+            break
+        # select the data that are within 3*sigma of the solution
+>>>>>>> LSsurf/smooth_xytb_fit.py : fixed convergence tolerance code structure and reporting
         if iteration > 0:
-            if in_TSE.size == in_TSE_last.size and np.all( in_TSE_last == in_TSE ):
+            frac_TSE_change = len(np.setxor1d(in_TSE_last, in_TSE))/N_editable
+            if frac_TSE_change > args['converge_tol_frac_TSE']:
                 if args['VERBOSE']:
-                    print("filtering unchanged, exiting after iteration %d" % iteration)
+                    print("filtering unchanged with tolerance %3.5f, exiting after iteration %d" 
+                          % (args['converge_tol_frac_TSE'], iteration))
                 break
         if iteration >= min_tse_iterations:
             if sigma_hat <= 1:
@@ -727,7 +761,11 @@ def smooth_xytb_fit(**kwargs):
     'bias_filter':None,
     'repeat_res':None,
     'converge_tol_dz':0.05,
+<<<<<<< HEAD
     'converge_tol_frac_edit':0,
+=======
+    'converge_tol_frac_TSE':0.,
+>>>>>>> LSsurf/smooth_xytb_fit.py : fixed convergence tolerance code structure and reporting
     'DEM_tol':None,
     'repeat_dt': 1,
     'Edit_only': False,

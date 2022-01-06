@@ -454,7 +454,7 @@ def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
     bad_bias = np.zeros_like(bias_scaled, dtype=bool)
     bad_bias |= last_edit
     if iteration >= args['bias_nsigma_iteration']:
-        extreme_bias_scaled_threshold = 3*scoreatpercentile(bias_scaled, 95)
+        extreme_bias_scaled_threshold = np.minimum(50, 3*scoreatpercentile(bias_scaled, 95))
         if np.any(bias_scaled > extreme_bias_scaled_threshold):
             bad_bias[ bias_scaled == np.max(bias_scaled) ] = True
         else:
@@ -492,6 +492,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     not_early_shelf = ~early_shelf
     N_eq = Gcoo.shape[0]
     last_iteration = False
+    m0 = np.zeros(Ip_c.shape[0])
     for iteration in range(args['max_iterations']):
         
         # augment the errors on the shelf
@@ -507,12 +508,11 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                              np.concatenate((np.flatnonzero(in_TSE), cov_rows)))), \
                            shape=(Gc.N_eq+in_TSE.sum(), Gcoo.shape[0])).tocsc()
 
-        m0_last = np.zeros(Ip_c.shape[0])
-
         if args['VERBOSE']:
             print("starting qr solve for iteration %d at %s" % (iteration, ctime()), flush=True)
         # solve the equations
         tic=time();
+        m0_last=m0
         m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs))));
         timing['sparseqr_solve']=time()-tic
 
@@ -825,7 +825,10 @@ def smooth_xytb_fit_aug(**kwargs):
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
         Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
     Ed=data.sigma.ravel()
-
+    if np.any(Ed==0):
+        raise(ValueError('zero value found in data sigma'))
+    if np.any(Ec==0):
+        raise(ValueError('zero value found in constraint sigma'))
     #print({op.name:[Ec[Gc.TOC['rows'][op.name]].min(),  Ec[Gc.TOC['rows'][op.name]].max()] for op in constraint_op_list})
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))
@@ -880,7 +883,7 @@ def smooth_xytb_fit_aug(**kwargs):
     # Compute the error in the solution if requested
     if args['compute_E']:
         r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
-        sigma_extra=calc_sigma_extra(r_data, data.sigma[data.three_sigma_edit==0])
+        sigma_extra=calc_sigma_extra(r_data, data.sigma[data.three_sigma_edit==1])
 
         # rebuild TCinv to take into account the extra error
         TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))

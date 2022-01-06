@@ -51,8 +51,10 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
             continue
         if isinstance(datasrc, (str)):
             dz=pc.grid.data().from_h5(datasrc, group=group, fields=field_mapping)
+            src_name=datasrc
         elif isinstance(datasrc, [pc.grid.data]):
             dz=datasrc.copy()
+            src_name='internal_prior'
         else:
             raise TypeError('datasource not understood')
 
@@ -76,10 +78,10 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
         dz=dz.as_points()
         dz=dz[dz.t != ref_time]
         # first matrix interpolates the model to the fit values at the delta-z time
-        m1 = lin_op(grids['dz'], name='prior_dz1_'+dz.filename)\
+        m1 = lin_op(grids['dz'], name='prior_dz1_'+src_name)\
             .interp_mtx((dz.y, dz.x, dz.t))
         # second matrix interpolates the model to data's reference epoch.
-        m0 = lin_op(grids['dz'], name='prior_dz0_'+dz.filename)\
+        m0 = lin_op(grids['dz'], name='prior_dz0_'+src_name)\
             .interp_mtx((dz.y, dz.x, np.zeros_like(dz.t)+ref_time))
         # invert the values of m1 (so that the reference epoch is subtracted)
         m0.v *= -1

@@ -165,7 +165,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
                 [(np.abs(bias_dict['val']) > args['bias_nsigma_edit'] * np.array(bias_dict['expected'])\
                                                                       * np.maximum(1, sigma_hat)) \
                  | bias_model['bias_param_dict']['edited']]
-            print(bad_bias_IDs)
+            #print(bad_bias_IDs)
             for ID in bad_bias_IDs:
                 #mask=np.ones(data.size, dtype=bool)
                 #Mark the ID as edited (because it will have a bias estimate of zero in subsequent iterations)

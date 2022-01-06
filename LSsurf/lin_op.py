@@ -35,6 +35,7 @@ class lin_op:
         self.dst_grid=None
         self.dst_ind0=None
         self.expected=None
+        self.prior=None
         self.shape=None
         self.size=None
 

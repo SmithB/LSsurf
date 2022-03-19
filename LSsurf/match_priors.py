@@ -64,8 +64,8 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
         yw, xw, tw=[np.diff(getattr(dz, field)[[0, -1]]) for field in ('y','x','t')]
 
         #Keep only the part of the data that's within the grid
-        bds = match_range(grids['dz'].bds, (yc+np.array([-1, 1])*(xw/2-edge_pad['xy']),
-                                            xc+np.array([-1, 1])*(yw/2-edge_pad['xy']),
+        bds = match_range(grids['dz'].bds, (yc+np.array([-1, 1])*(yw/2-edge_pad['xy']),
+                                            xc+np.array([-1, 1])*(xw/2-edge_pad['xy']),
                                             tc+np.array([-1, 1])*tw/2))
         ref_time=dz.t[ref_epoch]
 

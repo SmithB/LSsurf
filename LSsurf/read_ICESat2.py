@@ -53,8 +53,8 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         fields=field_dict
     
     dx=1.e4
-    bds={'x':np.r_[np.floor((xy0[0]-W['x']/2)/dx), np.ceil((xy0[0]+W['x']/2)/dx)]*dx, \
-         'y':np.r_[np.floor((xy0[1]-W['y']/2)/dx), np.ceil((xy0[1]+W['y']/2)/dx)]*dx}
+    bds={'x':np.r_[np.floor((xy0[0]-W['x']/2)/dx), np.ceil((xy0[0]+W['x']/2)/dx)+1]*dx, \
+         'y':np.r_[np.floor((xy0[1]-W['y']/2)/dx), np.ceil((xy0[1]+W['y']/2)/dx)+1]*dx}
     px, py=np.meshgrid(np.arange(bds['x'][0], bds['x'][1], dx),
                        np.arange(bds['y'][0], bds['y'][1], dx))
     D0=pc.geoIndex().from_file(gI_file).query_xy((px.ravel(), py.ravel()), fields=fields)
@@ -103,7 +103,8 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
               
         # rename the h_li field to 'z', and set time to the year
         # note that the extra half day is needed because 2018 is in between two leap years
-        D.assign({'z': D.h_li, 'time':D.delta_time/24/3600/365.25+2018+0.5/365.25,
+        # this means that time is years after Y2K + 2000 
+        D.assign({'z': D.h_li, 'time':D.delta_time/24/3600/365.25+2018.+0.5/365.25,
                   'sigma':D.h_li_sigma,'cycle':D.cycle_number})
         # thin to 40 m
         D.index(np.mod(D.segment_id, 2)==0)  

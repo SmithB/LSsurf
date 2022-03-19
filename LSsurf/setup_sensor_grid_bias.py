@@ -1,9 +1,9 @@
-from LSsurf import lin_op
+from LSsurf import lin_op, fd_grid
 import numpy as np
 
-def setup_grid_bias(data, G_data, constraint_op_list, grids, \
-                     name=None, param=None, grid=None, expected_rms=None, \
-                     expected_value=None, expected_rms_grad=None ):
+def setup_sensor_grid_bias(sensor, data, G_data, constraint_op_list, grids, \
+                     spacing=None, expected_rms=None, \
+                     expected_value=0, expected_rms_grad=None ):
     '''
     set up a matrix to fit a gridded bias that multiplies a data parameter
     
@@ -12,20 +12,20 @@ def setup_grid_bias(data, G_data, constraint_op_list, grids, \
         G_data: fd_grid.operator that maps model parameters to the data
         constraint_op_list: list: constraint operators
         grids: dict: named grids representing model parameters
-        expected: float, default=None: Expected RMS value of the parameter. If not specified, the RMS of the parameter will be unconstrained
+        expected_rms: float, default=None: Expected RMS value of the parameter. If not specified, the RMS of the parameter will be unconstrained
         expected_value: float, default=0: Expected value of the parameter.
-        expected_rms_grad: float, default=None: expected RMS gradient of the parameter.  If not specified, the RMS of the parameter will be unconstrained
+        expected_rms_grad: float, default=None: expected RMS gradient of the parameter.  If not specified, the gradient of the parameter will be unconstrained
     '''
-    if name is None:
-        name=param+'_bias'
+    Dsub=data[data.sensor==sensor]
+    name = f'sensor_{sensor}_bias'
+    xr=[np.floor(np.min(Dsub.x)/spacing)*spacing, np.ceil(np.max(Dsub.x/spacing))*spacing]
+    yr=[np.floor(np.min(Dsub.x)/spacing)*spacing, np.ceil(np.max(Dsub.y/spacing))*spacing]
+    grid=fd_grid([yr, xr], spacing*np.ones(2), name=name)
     grids[name]=grid
     grid.col_0 = G_data.col_N
     grid.col_N = grid.col_0 + grid.N_nodes
     interp_mtx=lin_op(grid=grid, name=name).\
-            interp_mtx(data.coords()[0:2])
-    # operator values are equal to the interpolator matrix values times the parameter values
-    temp = interp_mtx.v.ravel() * getattr(data, param)[interp_mtx.r.ravel().astype(int)]
-    interp_mtx.v = temp.reshape(interp_mtx.v.shape)
+            interp_mtx(Dsub.coords()[0:2])
     G_data.add(interp_mtx)
     #Build a constraint matrix for the curvature of the bias
     if expected_rms_grad is not None:

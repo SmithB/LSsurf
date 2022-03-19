@@ -861,7 +861,7 @@ def smooth_xytb_fit(**kwargs):
         raise(ValueError('zero value found in data sigma'))
     if np.any(Ec==0):
         raise(ValueError('zero value found in constraint sigma'))
-    #print({op.name:[Ec[Gc.TOC['rows'][op.name]].min(),  Ec[Gc.TOC['rows'][op.name]].max()] for op in constraint_op_list})
+
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))
 
@@ -875,7 +875,6 @@ def smooth_xytb_fit(**kwargs):
     # setup operators that take averages of the grid at different scales
     averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args, cell_area=grids['dz'].cell_area)
 
-    print(averaging_ops.keys())
     # setup masked averaging ops
     averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 

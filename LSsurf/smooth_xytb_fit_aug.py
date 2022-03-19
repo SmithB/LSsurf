@@ -30,7 +30,7 @@ def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     temp[in_TSE] = np.abs(r_DEM[in_TSE]) < DEM_tol
     return temp
 
-def calc_sigma_extra(r, sigma):
+def calc_sigma_extra(r, sigma, in_TSE, sigma_extra_masks=None):
     '''
     calculate the error needed to be added to the data to achieve RDE(rs)==1
 
@@ -46,9 +46,17 @@ def calc_sigma_extra(r, sigma):
     sigma_extra.
 
     '''
-    sigma_hat=RDE(r)
-    sigma_aug_minus_1_sq = lambda sigma1: (RDE(r/np.sqrt(sigma1**2+sigma**2))-1)**2
-    sigma_extra=scipyo.minimize_scalar(sigma_aug_minus_1_sq, method='bounded', bounds=[0, sigma_hat])['x']
+    if sigma_extra_masks is None:
+        sigma_extra_masks = {'all': np.ones_like(r, dtype=bool)}
+    sigma_extra=np.zeros_like(r)
+    for key, ii in sigma_extra_masks.items():
+        if np.sum(ii & in_TSE) < 10:
+            continue
+        this_r=r[ii & in_TSE]
+        this_sigma=sigma[ii & in_TSE]
+        sigma_hat=RDE(this_r)
+        sigma_aug_minus_1_sq = lambda sigma1: (RDE(this_r/np.sqrt(sigma1**2+this_sigma**2))-1)**2
+        sigma_extra[ii]=scipyo.minimize_scalar(sigma_aug_minus_1_sq, method='bounded', bounds=[0, sigma_hat])['x']
     return sigma_extra
 
 def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
@@ -79,12 +87,15 @@ def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
         bias_model['bias_param_dict']['edited'][bias_model['bias_param_dict']['ID'].index(ID)]=True
     if len(bad_bias_IDs)>0:
         print(f"\t have {len(bad_bias_IDs)} bad biases, with {np.sum(np.in1d(data.bias_ID, bad_bias_IDs))} data.")
+    else:
+        if iteration >= args['bias_nsigma_iteration']:
+            print("No bad biases found")
     in_TSE[np.in1d(data.bias_ID, bad_bias_IDs)]=False
 
     return  ~np.all(bias_model['bias_param_dict']['edited'] == last_edit)
 
 def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
-                bias_model=None):
+                bias_model=None, sigma_extra_masks=None):
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
     E_all = 1/TCinv.diagonal()
 
@@ -95,13 +106,12 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     in_TSE_original=np.zeros(data.shape, dtype=bool)
     in_TSE_original[in_TSE]=True
 
-    sigma_extra_pre=0
-    sigma_extra=0
-    if 'tide_ocean' in data.fields:
-        early_shelf = (data.time < 2009) & (data.tide_ocean != 0)
+    if 'editable' in data.fields:
+        N_editable=np.sum(data.editable)
     else:
-        early_shelf=np.zeros_like(data.x, dtype=bool)
-    not_early_shelf = ~early_shelf
+        N_editable=data.size
+
+    sigma_extra=0
     N_eq = Gcoo.shape[0]
     last_iteration = False
     m0 = np.zeros(Ip_c.shape[0])
@@ -109,9 +119,6 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
 
         # augment the errors on the shelf
         E2_plus=E_all**2
-        E2_plus[np.nonzero(early_shelf)] += sigma_extra_pre**2
-        if last_iteration:
-            E2_plus[np.nonzero(not_early_shelf)] += sigma_extra**2
         TCinv=sp.dia_matrix((1./np.sqrt(E2_plus),0), shape=(N_eq, N_eq))
 
         # build the parsing matrix that removes invalid rows
@@ -134,13 +141,9 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         if last_iteration:
             break
         # calculate the additional error needed to make the robust spread of the scaled residuals equal to 1
-        sigma_extra_pre=calc_sigma_extra(r_data[in_TSE & early_shelf], data.sigma[in_TSE & early_shelf])
-        sigma_extra=calc_sigma_extra(r_data[in_TSE & not_early_shelf], data.sigma[in_TSE & not_early_shelf])
-        # augmented sigma
-        sigma_aug2 = data.sigma**2
-        sigma_aug2[early_shelf] += sigma_extra_pre**2
-        sigma_aug2[not_early_shelf] += sigma_extra**2
-        sigma_aug=np.sqrt(sigma_aug2)
+        sigma_extra=calc_sigma_extra(r_data, data.sigma, in_TSE, sigma_extra_masks)
+
+        sigma_aug=np.sqrt(data.sigma**2 + sigma_extra**2)
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
 
@@ -156,22 +159,32 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
 
         # quit if the solution is too similar to the previous solution
-        if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > 2):
+        if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > args['min_iterations']):
             if args['VERBOSE']:
                 print("Solution identical to previous iteration with tolerance %3.1f, exiting after iteration %d" % (args['converge_tol_dz'], iteration))
             last_iteration = True
         # select the data that are within 3*sigma of the solution
         if args['VERBOSE']:
-            print('found %d in TSE, sigma_extra_pre = %3.3f, sigma_extra=%3.3f,  dt=%3.0f' % ( in_TSE.sum(), sigma_extra_pre, sigma_extra, timing['sparseqr_solve']), flush=True)
+            print('found %d in TSE, dt=%3.0f' % ( in_TSE.sum(), timing['sparseqr_solve']), flush=True)
+            if sigma_extra_masks is None:
+                print(f'\t sigma_extra={sigma_extra:3.4f}')
+            else:
+                for m_key, ii in sigma_extra_masks.items():
+                    print(f'\t sigma_extra for {m_key} : {np.median(sigma_extra[ii]):3.4f}', flush=True)
+                for m_key, ii in sigma_extra_masks.items():
+                    print(f'\t sigma_hat for {m_key} : {RDE(r_data[ii]/sigma_aug[ii]):3.4f}', flush=True)
         if iteration > 0  and iteration > args['bias_nsigma_iteration']:
-            if np.all( in_TSE_last == in_TSE ):
+            # Calculate the number of elements that have changed in in_TSE
+            frac_TSE_change = len(np.setxor1d(in_TSE_last, in_TSE))/N_editable
+            if frac_TSE_change < args['converge_tol_frac_TSE']:
                 if args['VERBOSE']:
-                    print("filtering unchanged, exiting after iteration %d" % iteration)
+                    print("filtering unchanged with tolerance %3.5f, will exit after iteration %d" 
+                          % (args['converge_tol_frac_TSE'], iteration+1))
                 last_iteration=True
-        if iteration >= np.maximum(2, args['bias_nsigma_iteration']+1):
-            if sigma_extra < 0.5 *np.min(data.sigma[in_TSE]) and not bias_editing_changed:
+        if iteration >= np.maximum(args['min_iterations'], args['bias_nsigma_iteration']+1):
+            if np.all(sigma_extra < 0.5 * np.min(data.sigma[in_TSE])) and not bias_editing_changed:
                 if args['VERBOSE']:
-                    print("sigma_0==0, exiting after iteration %d" % iteration, flush=True)
+                    print("sigma_extra is small, performing one additional iteration", flush=True)
                 last_iteration=True
         if iteration==args['max_iterations']-2:
             last_iteration=True
@@ -319,12 +332,14 @@ def smooth_xytb_fit_aug(**kwargs):
     'mask_scale':None,
     'compute_E':False,
     'max_iterations':10,
+    'min_iterations':2,
     'srs_proj4': None,
     'N_subset': None,
     'bias_params': None,
     'bias_filter':None,
     'repeat_res':None,
     'converge_tol_dz':0.05,
+    'converge_tol_frac_TSE':0.,
     'DEM_tol':None,
     'repeat_dt': 1,
     'Edit_only': False,
@@ -332,11 +347,12 @@ def smooth_xytb_fit_aug(**kwargs):
     'prior_args':None,
     'avg_scales':[],
     'data_slope_sensors':None,
-    'E_slope':0.05,
+    'E_slope_bias':0.01,
     'E_RMS_d2x_PS_bias':None,
     'E_RMS_PS_bias':None,
     'error_res_scale':None,
     'avg_masks':None,
+    'sigma_extra_masks':None,
     'bias_nsigma_edit':None,
     'bias_nsigma_iteration':2,
     'bias_edit_vals':None,
@@ -375,6 +391,12 @@ def smooth_xytb_fit_aug(**kwargs):
     if args['mask_file'] is not None:
         setup_mask(data, grids, valid_data, bds, args)
 
+    # update the sigma_extra_masks variable to the data mask
+    if args['sigma_extra_masks'] is not None:
+        for key in args['sigma_extra_masks']:
+            args['sigma_extra_masks'][key]=args['sigma_extra_masks'][key][valid_data==1]
+
+
     # Check if we have any data.  If not, quit
     if data.size==0:
         return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
@@ -412,11 +434,10 @@ def smooth_xytb_fit_aug(**kwargs):
     else:
         bias_model={}
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors'])>0:
-        #N.B.  This does not currently work.
-        bias_model['E_slope']=args['E_slope']
-        G_slope_bias, Gc_slope_bias, Cvals_slope_bias, bias_model = \
+        bias_model['E_slope_bias']=args['E_slope_bias']
+        G_slope_bias, Gc_slope_bias, bias_model = \
             data_slope_bias(data, bias_model, sensors=args['data_slope_sensors'],\
-                            col_0=G_data.col_N)
+                            col_0=G_data.col_N, E_rms_bias=args['E_slope_bias'])
         G_data.add(G_slope_bias)
         constraint_op_list.append(Gc_slope_bias)
 
@@ -442,14 +463,14 @@ def smooth_xytb_fit_aug(**kwargs):
         except ValueError as E:
             print("smooth_xytb_fit_aug:\n\t\tproblem with "+op.name)
             raise(E)
-    if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
-        Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
+    #if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
+    #    Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
     Ed=data.sigma.ravel()
     if np.any(Ed==0):
         raise(ValueError('zero value found in data sigma'))
     if np.any(Ec==0):
         raise(ValueError('zero value found in constraint sigma'))
-    #print({op.name:[Ec[Gc.TOC['rows'][op.name]].min(),  Ec[Gc.TOC['rows'][op.name]].max()] for op in constraint_op_list})
+
     # calculate the inverse square root of the data covariance matrix
     TCinv=sp.dia_matrix((1./np.concatenate((Ed, Ec)), 0), shape=(N_eq, N_eq))
 
@@ -488,11 +509,13 @@ def smooth_xytb_fit_aug(**kwargs):
         tic_iteration=time()
         m0, sigma_extra, in_TSE, rs_data=iterate_fit(data, Gcoo, rhs, \
                                 TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
-                                bias_model=bias_model)
+                                bias_model=bias_model, \
+                                sigma_extra_masks=args['sigma_extra_masks'])
 
         timing['iteration']=time()-tic_iteration
         valid_data[valid_data]=in_TSE
         data.assign({'three_sigma_edit':in_TSE})
+        data.assign({'sigma_extra':sigma_extra})
 
         # report the model-based estimate of the data points
         data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
@@ -503,11 +526,9 @@ def smooth_xytb_fit_aug(**kwargs):
 
     # Compute the error in the solution if requested
     if args['compute_E']:
-        r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
-        sigma_extra=calc_sigma_extra(r_data, data.sigma[data.three_sigma_edit==1])
 
         # rebuild TCinv to take into account the extra error
-        TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))
+        TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+data.sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))
 
         # We have generally not done any iterations at this point, so need to make the Ip_r matrix
         cov_rows=G_data.N_eq+np.arange(Gc.N_eq)

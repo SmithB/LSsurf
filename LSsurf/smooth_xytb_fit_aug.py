@@ -5,9 +5,11 @@ Created on Mon Dec  4 15:27:38 2017
 @author: ben
 """
 import numpy as np
+import re
 from LSsurf.lin_op import lin_op
 import scipy.sparse as sp
 from LSsurf.data_slope_bias import data_slope_bias
+from LSsurf.setup_sensor_grid_bias import setup_sensor_grid_bias
 import sparseqr
 from time import time, ctime
 from LSsurf.RDE import RDE
@@ -95,7 +97,7 @@ def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
     return  ~np.all(bias_model['bias_param_dict']['edited'] == last_edit)
 
 def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
-                bias_model=None, sigma_extra_masks=None):
+                grids, bias_model=None, sigma_extra_masks=None):
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
     E_all = 1/TCinv.diagonal()
 
@@ -217,6 +219,18 @@ def parse_biases(m, bias_model, bias_params):
             slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
     return b_dict, slope_bias_dict
 
+def parse_sensor_bias_grids(m0, G_data, grids):
+    sensor_bias_re=re.compile('sensor_.*_bias')
+    m={}
+    for key, cols in G_data.TOC['cols'].items():
+        if sensor_bias_re.search(key) is None:
+            continue
+        m[key]=pc.grid.data().from_dict({
+            'x':grids[key].ctrs[1],\
+            'y':grids[key].ctrs[0],\
+            'z':np.reshape(m0[cols], grids[key].shape)})
+    return m
+
 def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_res_scale=None):
     tic=time()
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
@@ -294,6 +308,8 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     # report the geolocation of the output map
     m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
 
+    m['sensor_bias_grids']=parse_sensor_bias_grids(m0, G_data, grids)
+
     # parse the resduals to assess the contributions of the total error:
     # Make the C matrix for the constraints
     TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
@@ -356,6 +372,7 @@ def smooth_xytb_fit_aug(**kwargs):
     'bias_nsigma_edit':None,
     'bias_nsigma_iteration':2,
     'bias_edit_vals':None,
+    'sensor_grid_bias_params':None,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -441,6 +458,10 @@ def smooth_xytb_fit_aug(**kwargs):
         G_data.add(G_slope_bias)
         constraint_op_list.append(Gc_slope_bias)
 
+    if args['sensor_grid_bias_params'] is not None:
+        for params in args['sensor_grid_bias_params']:
+            setup_sensor_grid_bias(data, grids, G_data, \
+                                   constraint_op_list, **params)
 
         # setup priors
     if args['prior_args'] is not None:
@@ -508,7 +529,8 @@ def smooth_xytb_fit_aug(**kwargs):
     if args['max_iterations'] > 0:
         tic_iteration=time()
         m0, sigma_extra, in_TSE, rs_data=iterate_fit(data, Gcoo, rhs, \
-                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
+                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, 
+                                args, grids,\
                                 bias_model=bias_model, \
                                 sigma_extra_masks=args['sigma_extra_masks'])
 

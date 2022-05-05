@@ -23,6 +23,7 @@ from LSsurf.smooth_xytb_fit import setup_grids, assign_bias_ID, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
                                     build_reference_epoch_matrix, setup_bias_fit
 from LSsurf.match_priors import match_prior_dz
+from LSsurf.match_priors import match_tile_edges
 
 def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     m1 = m0.copy()
@@ -169,7 +170,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         if args['VERBOSE']:
             print('found %d in TSE, dt=%3.0f' % ( in_TSE.sum(), timing['sparseqr_solve']), flush=True)
             if sigma_extra_masks is None:
-                print(f'\t sigma_extra={sigma_extra:3.4f}')
+                print(f'\t median(sigma_extra)={np.median(sigma_extra):3.4f}')
             else:
                 for m_key, ii in sigma_extra_masks.items():
                     print(f'\t sigma_extra for {m_key} : {np.median(sigma_extra[ii]):3.4f}', flush=True)
@@ -180,7 +181,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
             frac_TSE_change = len(np.setxor1d(in_TSE_last, in_TSE))/N_editable
             if frac_TSE_change < args['converge_tol_frac_TSE']:
                 if args['VERBOSE']:
-                    print("filtering unchanged with tolerance %3.5f, will exit after iteration %d" 
+                    print("filtering unchanged with tolerance %3.5f, will exit after iteration %d"
                           % (args['converge_tol_frac_TSE'], iteration+1))
                 last_iteration=True
         if iteration >= np.maximum(args['min_iterations'], args['bias_nsigma_iteration']+1):
@@ -361,6 +362,7 @@ def smooth_xytb_fit_aug(**kwargs):
     'Edit_only': False,
     'dzdt_lags':None,
     'prior_args':None,
+    'prior_edge_args':None,
     'avg_scales':[],
     'data_slope_sensors':None,
     'E_slope_bias':0.01,
@@ -412,7 +414,6 @@ def smooth_xytb_fit_aug(**kwargs):
     if args['sigma_extra_masks'] is not None:
         for key in args['sigma_extra_masks']:
             args['sigma_extra_masks'][key]=args['sigma_extra_masks'][key][valid_data==1]
-
 
     # Check if we have any data.  If not, quit
     if data.size==0:
@@ -467,12 +468,16 @@ def smooth_xytb_fit_aug(**kwargs):
     if args['prior_args'] is not None:
         constraint_op_list += match_prior_dz(grids, **args['prior_args'])
 
+    if args['prior_edge_args'] is not None:
+        prior_ops, prior_xy = match_tile_edges(grids, args['reference_epoch'], **args['prior_edge_args'])
+        constraint_op_list += prior_ops
+
     for op in constraint_op_list:
         if op.prior is None:
             op.prior=np.zeros_like(op.expected)
 
     # put the equations together
-    Gc=lin_op(None, name='constraints').vstack(constraint_op_list)
+    Gc = lin_op(None, name='constraints').vstack(constraint_op_list)
 
     N_eq=G_data.N_eq+Gc.N_eq
 
@@ -529,7 +534,7 @@ def smooth_xytb_fit_aug(**kwargs):
     if args['max_iterations'] > 0:
         tic_iteration=time()
         m0, sigma_extra, in_TSE, rs_data=iterate_fit(data, Gcoo, rhs, \
-                                TCinv, G_data, Gc, in_TSE, Ip_c, timing, 
+                                TCinv, G_data, Gc, in_TSE, Ip_c, timing,
                                 args, grids,\
                                 bias_model=bias_model, \
                                 sigma_extra_masks=args['sigma_extra_masks'])

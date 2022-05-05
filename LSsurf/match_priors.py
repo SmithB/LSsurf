@@ -100,8 +100,10 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
     return m_list
 
 
-def match_tile_edges(grids, xy0, prior_dir, tile_W=8.e4, tile_spacing=4.e4, edge_include=3.e3,
-                     ref_epoch=0, group='dz', field_mapping=None, \
+def match_tile_edges(grids, ref_epoch, prior_dir=None,
+                     tile_spacing=4.e4,
+                     edge_include=3.e3,
+                     group='dz', field_mapping=None, \
                      sigma_scale=1, sigma_max=None):
     '''
     Make a set of operators to match the current tile to adjacent tiles
@@ -122,6 +124,9 @@ def match_tile_edges(grids, xy0, prior_dir, tile_W=8.e4, tile_spacing=4.e4, edge
     Returns:
         constraint_list (list) : list of LSsurf.lin_op objects containing the constraint equations.
     '''
+    xy0 = [np.mean(grids['z0'].bds[dim]) for dim in [1, 0]]
+    tile_W = np.diff(grids['z0'].bds[0])
+
     tile_re=re.compile('E(.*)_N(.*).h5')
     if isinstance(prior_dir, (list, tuple)):
         all_files = []
@@ -129,7 +134,6 @@ def match_tile_edges(grids, xy0, prior_dir, tile_W=8.e4, tile_spacing=4.e4, edge
             all_files += glob.glob(thedir+'/E*N*.h5')
     else:
         all_files=glob.glob(prior_dir+'/E*N*.h5')
-    dzs=[]
     HX = tile_W/2
     W_overlap = (tile_W-tile_spacing)/2
 
@@ -138,13 +142,24 @@ def match_tile_edges(grids, xy0, prior_dir, tile_W=8.e4, tile_spacing=4.e4, edge
     for file in all_files:
         try:
             xyc=tile_re.search(file).groups()
-            xyc=(int(xyc[0]), int(xyc[1]))
+            xyc=(int(xyc[0])*1000., int(xyc[1])*1000.)
         except Exception:
             print(f"couldn't parse filename {file}")
             continue
+
+        # don't constrain based on the same xy0
+        if xyc[0]==xy0[0] and xyc[1]==xy0[1]:
+            continue
+        # skip tiles that are too far away:
+        if np.max(np.abs(np.r_[xy0]-np.r_[xyc]))>(tile_spacing+edge_include):
+            continue
+
         dz=pc.grid.data().from_h5(file, group=group, fields=field_mapping)
         src_name=file
-
+        ref_time = dz.t[ref_epoch]
+        for field in ['cell_area','mask']:
+            if field in dz.fields:
+                dz.fields.remove(field)
         dz=dz.as_points()
         # select points that are close to the edge of the current tile
         ii  =  (dz.x > xy0[0] + HX - edge_include ) | (dz.x < xy0[0] - HX + edge_include )
@@ -154,12 +169,12 @@ def match_tile_edges(grids, xy0, prior_dir, tile_W=8.e4, tile_spacing=4.e4, edge
         ii &= ((dz.y >= xy0[1] - HX) & (dz.y <= xy0[1] + HX))
         # select points that aren't too far from the prior tile center in either direction
         ii &= (np.abs(dz.x-xyc[0]) < HX-W_overlap)
-        ii &= (np.abs(dz.x-xyc[1]) < HX-W_overlap)
+        ii &= (np.abs(dz.y-xyc[1]) < HX-W_overlap)
         if not np.any(ii):
             continue
         constraint_list += [make_prior_op(grids, dz[ii], src_name,
-                                          ref_epoch=ref_epoch, sigma_scale=sigma_scale)]
+                                          ref_time=ref_time, sigma_scale=sigma_scale)]
         # make a list of unique constraint points (for debugging)
-        u_xy= np.unique(dz.x+1j*dz.y)
+        u_xy= np.unique(dz.x[ii]+1j*dz.y[ii])
         constraint_xy[file]=(np.real(u_xy), np.imag(u_xy))
     return constraint_list, constraint_xy

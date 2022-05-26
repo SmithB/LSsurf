@@ -1,5 +1,7 @@
 from LSsurf import lin_op, fd_grid
 import numpy as np
+import re
+import pointCollection as pc
 
 def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
                     sensor=None,\
@@ -47,3 +49,16 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
         mag_b.expected=expected_rms+np.zeros(mag_b.N_eq)
         mag_b.prior=expected_val+np.zeros(mag_b.N_eq)
         constraint_op_list.append(mag_b)
+
+
+def parse_sensor_bias_grids(m0, G_data, grids):
+    sensor_bias_re=re.compile('sensor_.*_bias')
+    m={}
+    for key, cols in G_data.TOC['cols'].items():
+        if sensor_bias_re.search(key) is None:
+            continue
+        m[key]=pc.grid.data().from_dict({
+            'x':grids[key].ctrs[1],\
+            'y':grids[key].ctrs[0],\
+            'z':np.reshape(m0[cols], grids[key].shape)})
+    return m

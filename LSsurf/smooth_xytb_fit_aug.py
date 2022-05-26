@@ -9,21 +9,22 @@ import re
 from LSsurf.lin_op import lin_op
 import scipy.sparse as sp
 from LSsurf.data_slope_bias import data_slope_bias
-from LSsurf.setup_sensor_grid_bias import setup_sensor_grid_bias
+from LSsurf.setup_sensor_grid_bias import setup_sensor_grid_bias,\
+                                            parse_sensor_bias_grids
 import sparseqr
 from time import time, ctime
 from LSsurf.RDE import RDE
-#import LSsurf.op_structure_checks as checks
 import pointCollection as pc
-import scipy.optimize as scipyo
 from scipy.stats import scoreatpercentile
 from LSsurf.inv_tr_upper import inv_tr_upper
-from LSsurf.smooth_xytb_fit import setup_grids, assign_bias_ID, \
-                                    setup_mask, setup_smoothness_constraints,\
+from LSsurf.bias_functions import assign_bias_ID, setup_bias_fit, parse_biases
+from LSsurf.grid_functions import setup_grids, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
-                                    build_reference_epoch_matrix, setup_bias_fit
-from LSsurf.match_priors import match_prior_dz
-from LSsurf.match_priors import match_tile_edges
+                                    setup_mask
+from LSsurf.constraint_functions import setup_smoothness_constraints, \
+                                        build_reference_epoch_matrix
+from LSsurf.match_priors import match_prior_dz,  match_tile_edges
+from LSsurf.calc_sigma_extra import calc_sigma_extra, calc_sigma_extra_on_grid
 
 def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     m1 = m0.copy()
@@ -32,35 +33,6 @@ def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     temp=in_TSE
     temp[in_TSE] = np.abs(r_DEM[in_TSE]) < DEM_tol
     return temp
-
-def calc_sigma_extra(r, sigma, in_TSE, sigma_extra_masks=None):
-    '''
-    calculate the error needed to be added to the data to achieve RDE(rs)==1
-
-    Parameters
-    ----------
-    r : numpy array
-        model residuals
-    sigma : numpy array
-        estimated errors
-
-    Returns
-    -------
-    sigma_extra.
-
-    '''
-    if sigma_extra_masks is None:
-        sigma_extra_masks = {'all': np.ones_like(r, dtype=bool)}
-    sigma_extra=np.zeros_like(r)
-    for key, ii in sigma_extra_masks.items():
-        if np.sum(ii & in_TSE) < 10:
-            continue
-        this_r=r[ii & in_TSE]
-        this_sigma=sigma[ii & in_TSE]
-        sigma_hat=RDE(this_r)
-        sigma_aug_minus_1_sq = lambda sigma1: (RDE(this_r/np.sqrt(sigma1**2+this_sigma**2))-1)**2
-        sigma_extra[ii]=scipyo.minimize_scalar(sigma_aug_minus_1_sq, method='bounded', bounds=[0, sigma_hat])['x']
-    return sigma_extra
 
 def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
 
@@ -143,9 +115,14 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         rs_data=r_data/data.sigma
         if last_iteration:
             break
-        # calculate the additional error needed to make the robust spread of the scaled residuals equal to 1
-        sigma_extra=calc_sigma_extra(r_data, data.sigma, in_TSE, sigma_extra_masks)
-
+        
+        if 'sigma_extra_bin_spacing' not in args or args['sigma_extra_bin_spacing'] is None:
+            # calculate the additional error needed to make the robust spread of the scaled residuals equal to 1
+            sigma_extra=calc_sigma_extra(r_data, data.sigma, in_TSE, sigma_extra_masks)
+        else:
+            sigma_extra=calc_sigma_extra_on_grid(data.x, data.y, r_data, data.sigma, in_TSE,
+                                                 sigma_extra_masks=sigma_extra_masks, 
+                                                 spacing=args['sigma_extra_bin_spacing'])
         sigma_aug=np.sqrt(data.sigma**2 + sigma_extra**2)
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
@@ -193,44 +170,6 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
             last_iteration=True
 
     return m0, sigma_extra, in_TSE, rs_data
-
-def parse_biases(m, bias_model, bias_params):
-    """
-        parse the biases in the ouput model
-
-        inputs:
-            m: model vector
-            bias_model: the bias model
-            bias_params: a list of parameters for which biases are calculated
-        output:
-            b_dict: a dictionary giving the parameters and associated bias values for each ibas ID
-            slope_bias_dict:  a dictionary giving the parameters and assicated biase values for each slope bias ID
-    """
-    slope_bias_dict={}
-    b_dict={param:list() for param in bias_params+['val','ID','expected']}
-    # loop over the keys in bias_model['bias_ID_dict']
-    for item in bias_model['bias_ID_dict']:
-        b_dict['val'].append(m[bias_model['bias_ID_dict'][item]['col']])
-        b_dict['ID'].append(item)
-        b_dict['expected'].append(bias_model['E_bias'][item])
-        for param in bias_params:
-            b_dict[param].append(bias_model['bias_ID_dict'][item][param])
-    if 'slope_bias_dict' in bias_model:
-        for key in bias_model['slope_bias_dict']:
-            slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
-    return b_dict, slope_bias_dict
-
-def parse_sensor_bias_grids(m0, G_data, grids):
-    sensor_bias_re=re.compile('sensor_.*_bias')
-    m={}
-    for key, cols in G_data.TOC['cols'].items():
-        if sensor_bias_re.search(key) is None:
-            continue
-        m[key]=pc.grid.data().from_dict({
-            'x':grids[key].ctrs[1],\
-            'y':grids[key].ctrs[0],\
-            'z':np.reshape(m0[cols], grids[key].shape)})
-    return m
 
 def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_res_scale=None):
     tic=time()
@@ -350,6 +289,7 @@ def smooth_xytb_fit_aug(**kwargs):
     'compute_E':False,
     'max_iterations':10,
     'min_iterations':2,
+    'sigma_extra_bin_spacing':None,
     'srs_proj4': None,
     'N_subset': None,
     'bias_params': None,
@@ -553,7 +493,10 @@ def smooth_xytb_fit_aug(**kwargs):
 
     # Compute the error in the solution if requested
     if args['compute_E']:
-
+        # if sigma_extra is not a data field, make a generous assumption
+        if not 'sigma_extra' in data.fields:
+            data.assign({'sigma_extra': np.zeros_like(data.sigma)})
+        
         # rebuild TCinv to take into account the extra error
         TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+data.sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))
 

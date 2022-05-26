@@ -177,4 +177,5 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
         # make a list of unique constraint points (for debugging)
         u_xy= np.unique(dz.x[ii]+1j*dz.y[ii])
         constraint_xy[file]=(np.real(u_xy), np.imag(u_xy))
+        print(f"sigma_scale={sigma_scale}")
     return constraint_list, constraint_xy

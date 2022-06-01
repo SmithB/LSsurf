@@ -21,6 +21,7 @@ from LSsurf.bias_functions import assign_bias_ID, setup_bias_fit, parse_biases
 from LSsurf.grid_functions import setup_grids, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
                                     setup_mask
+from LSsurf.setup_grid_bias import setup_grid_bias
 from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 

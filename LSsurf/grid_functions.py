@@ -44,14 +44,22 @@ def setup_grids(args):
     '''
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
+    z0_mask_data=None
     if args['mask_data'] is not None:
         mask_file = None
+        if len(args['mask_data'].size)==3:
+            valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t < bds['t'][-1])
+            z0_mask_data=pc.grid.data().from_dict({
+                'x':args['mask_data'].x,
+                'y':args['mask_data'].y,
+                'z':np.sum(args['mask_data'].z[:,:,valid_t])>=0
+                })
     else:
         mask_file=args['mask_file']
 
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
-         mask_data=args['mask_data'])
+         name='z0', srs_proj4=args['srs_proj4'], mask_file=mask_file,\
+         mask_data=z0_mask_data)
 
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
@@ -61,8 +69,28 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
 
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
+    mask_data=args['mask_data']
     if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
-        grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
+        if mask_data is not None and mask_data.t is not None and len(mask_data.t) > 1:
+            # we have a time-dependent grid
+            grids['dz'].cell_area = np.zeros(grids['dz'].shape)
+            for t_ind, this_t in enumerate(grids['dz'].ctrs[2]):
+                if this_t <= mask_data.t[0]:
+                    this_mask=mask_data[:,:,0]
+                elif this_t >= mask_data.t[-1]:
+                    this_mask=mask_data[:,:,-1]
+                else:
+                    i_t = np.max(mask_data.t < this_t)
+                    di = (this_t - mask_data.t[i_t])/(mask_data.t[i_t+1]-mask_data[i_t])
+                    this_mask = pc.grid.data().from_dict({'x':mask_data.x, 
+                                                          'y':mask_data.y,
+                                                          'z':mask_data.z[i_t]*(1-di)+mask_data.z[i_t+1]*di})
+                temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
+                     name='z0', srs_proj4=args['srs_proj4'], \
+                     mask_data=this_mask)
+                grids['dz'].cell_area[:,:,t_ind] = sum_cell_area(temp_grid, grids['dz'])
+        else:
+            grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
     else:
         grids['dz'].cell_area=calc_cell_area(grids['dz'])
     # last-- multiply the z0 cell area by the z0 mask
@@ -76,10 +104,21 @@ def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None,
     # calculate the area of masked cells in a coarse grid within the cells of a fine grid
     if cell_area_f is None:
         cell_area_f = calc_cell_area(grid_f)*grid_f.mask
+    if len(cell_area_f.shape)==3:
+        grid_3d=True
+        dims=slice(0,3)
+    else:
+        grid_3d=False
+        dims=slice(0,3)
     n_k=(grid_c.delta[0:2]/grid_f.delta[0:2]+1).astype(int)
-    temp_grid = fd_grid((grid_f.bds[0:2]), deltas=grid_f.delta[0:2])
-    fine_to_coarse = lin_op(grid=temp_grid).sum_to_grid3( n_k, sub0s=sub0s, taper=True, valid_equations_only=False, dims=[0,1])
-    result=fine_to_coarse.toCSR().dot(cell_area_f.ravel()).reshape(grid_c.shape[0:2])
+    if grid_3d:
+        n_k[2]=1
+        
+    temp_grid = fd_grid((grid_f.bds[dims]), deltas=grid_f.delta[dims])
+    print(sub0s)
+    fine_to_coarse = lin_op(grid=temp_grid).sum_to_grid3( n_k, sub0s=sub0s, taper=True, valid_equations_only=False, dims=[dims])
+    result=fine_to_coarse.toCSR().dot(cell_area_f.ravel()).reshape(grid_c.shape[dims])
+
     if return_op:
         return result, fine_to_coarse
     return result
@@ -145,8 +184,7 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
         op=lin_op(grid, name=this_name, col_N=col_N)\
             .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True)
 
-        op.apply_2d_mask(mask=cell_area)
-        op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, sub0s=sub0s, cell_area_f=cell_area)
+        op.apply_mask(mask=cell_area)
 
         if cell_area is not None:
             # if cell area was specified, normalize each row by the input area

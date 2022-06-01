@@ -583,6 +583,32 @@ class lin_op:
         self.r, self.c, self.v=[temp.row, temp.col, temp.data]
         return self
 
+    def apply_mask(self, mask=None):
+        # multiply array elements by the values in a mask
+        # This function handles either 2d or 3d masks
+        # if no mask is specified, use self.grid.mask
+        if mask is None:
+            mask=self.grid.mask
+        csr=self.toCSR()
+
+        for row in range(csr.shape[0]):
+            # get the indices of the nonzero entries for the row
+            inds=csr[row,:].nonzero()[1]
+            # get the mask subscripts for the indices
+            subs=np.unravel_index(inds-self.grid.col_0, self.grid.shape)
+            if len(mask.shape)==3:
+                # query the mask at those points
+                mask_ind=np.ravel_multi_index([subs[0], subs[1], subs[2]], mask.shape)
+            else:
+                mask_ind=np.ravel_multi_index([subs[0], subs[1]], mask.shape)
+            # want to do: csr[row,inds] *= mask.ravel()[mask_ind]
+            # but need to add a toarray() step to avoid broadcasting rules
+            temp = csr[row, inds].toarray()
+            csr[row,inds] = temp.ravel()*mask.ravel()[mask_ind]
+        temp=csr.tocoo()
+        self.r, self.c, self.v=[temp.row, temp.col, temp.data]
+        return self
+
     def print_TOC(self):
         for rc in ('cols','rows'):
             print(rc)

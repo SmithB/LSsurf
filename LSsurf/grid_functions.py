@@ -10,13 +10,14 @@ import numpy as np
 from LSsurf.fd_grid import fd_grid
 from LSsurf.lin_op import lin_op
 from LSsurf.unique_by_rows import unique_by_rows
+import scipy.sparse as sp
 import pointCollection as pc
 
 ''' grid functions
-    
+
     This file contain functions to setup grids for least-squares surface-
     fitting problems
-    
+
     Contains:
         setup_grids, sum_cell_area, calc_cell_area, setup_averaging_ops, setup_avg_mask_ops, setup_mask
 '''
@@ -31,7 +32,7 @@ def setup_grids(args):
         W: dictionary with entries 'x','y','t' specifying the domain width in x, y, and time
         ctr: dictionary with entries 'x','y','t' specifying the domain center in x, y, and time
         spacing: dictionary with entries 'z0','dz' and 'dt' specifying the spacing of the z0 grid, the spacing of the dz grid, and the duration of the epochs
-        srs_proj4: a proj4 string specifying the data projection       
+        srs_proj4: a proj4 string specifying the data projection
         mask_file: the mask file which has 1 for points in the domain (data will be used and strong constraints applied)
         mask_data: pointCollection.data object containing the mask.  If this is specified, mask_file is ignored
     Outputs:
@@ -46,29 +47,34 @@ def setup_grids(args):
     grids=dict()
     z0_mask_data=None
     if args['mask_data'] is not None:
+        # use mask_data for preference over the mask file
         mask_file = None
-        if len(args['mask_data'].size)==3:
+        if len(args['mask_data'].shape)==3:
+            # if we have a 3D mask data, make a z0 mask that is the union of all
+            # time epochs
+            z0_mask_data=args['mask_data'].copy()
             valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t < bds['t'][-1])
             z0_mask_data=pc.grid.data().from_dict({
                 'x':args['mask_data'].x,
                 'y':args['mask_data'].y,
-                'z':np.sum(args['mask_data'].z[:,:,valid_t])>=0
+                'z':np.sum(args['mask_data'].z[:,:,valid_t], axis=2)>0
                 })
     else:
         mask_file=args['mask_file']
 
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-         name='z0', srs_proj4=args['srs_proj4'], mask_file=mask_file,\
-         mask_data=z0_mask_data)
+                        name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
+                        mask_data=z0_mask_data)
 
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
-        [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
-         name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-         mask_file=mask_file, mask_data=args['mask_data'])
+                        [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
+                        name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
+                        mask_file=mask_file, mask_data=args['mask_data'])
+
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
-
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
+
     mask_data=args['mask_data']
     if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
         if mask_data is not None and mask_data.t is not None and len(mask_data.t) > 1:
@@ -80,15 +86,16 @@ def setup_grids(args):
                 elif this_t >= mask_data.t[-1]:
                     this_mask=mask_data[:,:,-1]
                 else:
-                    i_t = np.max(mask_data.t < this_t)
-                    di = (this_t - mask_data.t[i_t])/(mask_data.t[i_t+1]-mask_data[i_t])
-                    this_mask = pc.grid.data().from_dict({'x':mask_data.x, 
+                    # find the first time slice of mask_data that is gt this time
+                    i_t = np.argmin(mask_data.t < this_t)-1
+                    di = (this_t - mask_data.t[i_t])/(mask_data.t[i_t+1]-mask_data.t[i_t])
+                    this_mask = pc.grid.data().from_dict({'x':mask_data.x,
                                                           'y':mask_data.y,
-                                                          'z':mask_data.z[i_t]*(1-di)+mask_data.z[i_t+1]*di})
-                temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-                     name='z0', srs_proj4=args['srs_proj4'], \
-                     mask_data=this_mask)
-                grids['dz'].cell_area[:,:,t_ind] = sum_cell_area(temp_grid, grids['dz'])
+                                                          'z':mask_data.z[:,:,i_t]*(1-di)+mask_data.z[:,:,i_t+1]*di})
+                    temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
+                         name='z0', srs_proj4=args['srs_proj4'], \
+                        mask_data=this_mask)
+                    grids['dz'].cell_area[:,:,t_ind] = sum_cell_area(temp_grid, grids['dz'])
         else:
             grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
     else:
@@ -97,26 +104,22 @@ def setup_grids(args):
     if grids['z0'].mask is not None:
         grids['z0'].cell_area *= grids['z0'].mask
 
-    return grids, bds
-
-
 def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None, taper=True):
-    # calculate the area of masked cells in a coarse grid within the cells of a fine grid
+    # calculate the area of masked cells in a fine grid within the cells of a coarse grid
     if cell_area_f is None:
         cell_area_f = calc_cell_area(grid_f)*grid_f.mask
     if len(cell_area_f.shape)==3:
         grid_3d=True
-        dims=slice(0,3)
+        dims=list(range(0,3))
     else:
         grid_3d=False
-        dims=slice(0,3)
+        dims=list(range(0,2))
     n_k=(grid_c.delta[0:2]/grid_f.delta[0:2]+1).astype(int)
     if grid_3d:
-        n_k[2]=1
-        
-    temp_grid = fd_grid((grid_f.bds[dims]), deltas=grid_f.delta[dims])
-    print(sub0s)
-    fine_to_coarse = lin_op(grid=temp_grid).sum_to_grid3( n_k, sub0s=sub0s, taper=True, valid_equations_only=False, dims=[dims])
+        n_k =np.array(list(n_k)+[1])
+
+    temp_grid = fd_grid([grid_f.bds[ii] for ii in dims], deltas=grid_f.delta[dims])
+    fine_to_coarse = lin_op(grid=temp_grid).sum_to_grid3( n_k, sub0s=sub0s, taper=True, valid_equations_only=False, dims=dims)
     result=fine_to_coarse.toCSR().dot(cell_area_f.ravel()).reshape(grid_c.shape[dims])
 
     if return_op:
@@ -199,8 +202,20 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
             dz_name='avg_dzdt_'+str(int(scale))+'m'+'_lag'+str(lag)
             op=lin_op(grid, name=this_name, col_N=col_N)\
                 .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
-                    .apply_2d_mask(mask=cell_area)
-            op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, sub0s=sub0s, cell_area_f=cell_area)
+                    .apply_mask(mask=grid.mask_3d.z, time_step_overlap=2)\
+                    .apply_mask(mask=cell_area)
+            # make an sparse matrix that is like the time-difference operator,
+            # but with all values set to 0.5 (instead of +- 1).  When this is
+            # multiplied by the cell area, it will calculate the area within each
+            # coarse cell.  This is similar to what sum_cell_area does, but takes
+            # into account the time-varying mask.
+            temp=sp.coo_matrix(((op.v !=0 )*0.5,(op.r, op.c-grid.col_0)), \
+                               shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
+            op.dst_grid.cell_area = temp.dot(grid.cell_area.ravel()).reshape(op.dst_grid.shape)
+            #op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, \
+            #                                      sub0s=sub0s, \
+            #                                      cell_area_f=cell_area, \
+            #                                      time_step_overlap=2)
             if cell_area is not None:
                 # the appropriate weight is expected number of nonzero elements
                 # for each nonzero node, times the weight for each time step

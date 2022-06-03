@@ -153,8 +153,16 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
         # build the not-averaged dz/dt operators (these are not masked)
         for lag in args['dzdt_lags']:
             this_name='dzdt_lag'+str(lag)
-            op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag)
-            op.dst_grid.cell_area=grid.cell_area
+            op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
+            # Map the cell area for the nonzero cells in the operator to the output grid
+            temp=sp.coo_matrix(((op.v !=0 ).astype(float),(op.r, op.c-grid.col_0)), \
+                               shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
+            # use this matrix to identify the cells that do not have first and last values
+            # witin the mask
+            num_cells = temp.dot(grid.mask_3d.z.ravel())
+            op.v[np.in1d(op.r, np.flatnonzero(num_cells<2))]=0
+            # use this matrix to calculate the cell area
+            op.dst_grid.cell_area = temp.dot(grid.cell_area.ravel()).reshape(op.dst_grid.shape)
             ops[this_name]=op
 
     # make the averaged ops

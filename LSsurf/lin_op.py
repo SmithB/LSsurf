@@ -42,6 +42,11 @@ class lin_op:
     def __update_size_and_shape__(self):
         self.shape = (self.N_eq, self.col_N)
 
+    def ravel(self):
+        self.r=self.r.ravel()
+        self.c=self.c.ravel()
+        self.v=self.v.ravel()
+        return self
 
     def diff_op(self, delta_subs, vals,  which_nodes=None, valid_equations_only=True):
         # build an operator that calculates linear combination of the surrounding
@@ -324,7 +329,7 @@ class lin_op:
         return self
 
     def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, \
-                     valid_equations_only=True, dims=None, match_3d_mask=False):
+                     valid_equations_only=True, dims=None):
         '''make an operator that adds together values around output grid points
 
         Parameters
@@ -341,8 +346,6 @@ class lin_op:
             If true, only equations that fall within the tapered area will be included. The default is True.
         dims : TYPE, optional
             Dimensions over which to sum.  If now specified, all dimensions will be used. The default is None.
-        match_3d_mask : TYPE, optional
-            DESCRIPTION. The default is False.
 
         Returns
         -------

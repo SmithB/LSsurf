@@ -336,7 +336,7 @@ class lin_op:
         ----------
         kernel_size : integer
             Number of pixels to be averaged in each output grid cell
-        sub0s : TYPE, optional
+        sub0s : iterable, optional
             indexes of central input grid cells to be averaged. The default is None.
         lag : integer, optional
             If specified, a dz/dt operator is created, lagged by this number of time epochs. The default is None.
@@ -621,9 +621,10 @@ class lin_op:
             # get the mask subscripts for the indices
             subs=np.unravel_index(inds-self.grid.col_0, self.grid.shape)
             # convert the subscripts into an index into the raveled mask
-            mask_ind=np.ravel_multi_index([*subs[0:len(mask.shape)]], mask.shape)
+            mask_ind=np.ravel_multi_index([*subs[0:mask.ndim]], mask.shape)
             mask_sub = mask.ravel()[mask_ind]
             if not np.any(mask_sub):
+                csr[row, inds]=0.
                 continue
             if time_step_overlap > 1:
                 # Count the time steps overlapped for each 2-d grid cell
@@ -634,7 +635,7 @@ class lin_op:
                 # find 2-D cells that contain enough time steps
                 enough_cells = twoD_to_3D.dot(mask.ravel()) >= time_step_overlap
                 # map those 2-D cells back to the 3-D index
-                overlap_mask = twoD_to_3D.T.dot(enough_cells)
+                overlap_mask = twoD_to_3D.T.dot(enough_cells.astype(float))
 
             # want to do: csr[row,inds] *= mask.ravel()[mask_ind]
             # but need to add a toarray() step to avoid broadcasting rules

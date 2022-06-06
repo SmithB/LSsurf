@@ -99,8 +99,8 @@ class fd_grid(object):
             return ind
 
     def read_geotif(self, filename, srs_proj4=None, dataType=gdal.GDT_Float32, interp_algorithm=gdal.GRA_NearestNeighbour):
+        # read data from a geotif
 
-        # or it can be stored in the grid
         if srs_proj4 is None:
             srs_proj4=self.srs_proj4
         # the gdal geotransform gives the top left corner of each pixel.
@@ -141,6 +141,7 @@ class fd_grid(object):
 
     def burn_mask(self, mask_file, srs_proj4=None):
 
+        # Burn a mask from a vector file into a mask with the grid's dimensions
         mask_ds = pc.grid.data().from_dict({'x':self.ctrs[1], 'y':self.ctrs[0], 'z':np.zeros(self.shape[0:2])})\
             .to_gdal(srs_proj4=self.srs_proj4)
 
@@ -149,9 +150,9 @@ class fd_grid(object):
         gdal.RasterizeLayer(mask_ds, [1], mask_layer, burn_values=[1])
         vector_mask=None
         return np.flipud(mask_ds.GetRasterBand(1).ReadAsArray())
-        
+
     def make_eroded_source_mask(self, mask_data, mask_is_3d):
-        
+
         mask_delta = [mask_data.y[1]-mask_data.y[0] , mask_data.x[1]-mask_data.x[0]]
         # If this grid's spacing is more than twice that of the mask
         # data, erode the mask by 1/2 pixel before proceeding
@@ -173,7 +174,7 @@ class fd_grid(object):
         else:
             local_mask=mask_data
         return local_mask
-        
+
     def setup_mask(self, mask_data=None, mask_file=None):
         if mask_data is None:
             # ignore the mask file if mask_data is provided
@@ -197,7 +198,7 @@ class fd_grid(object):
             if mask_is_3d:
                 self.mask_3d=pc.grid.data().from_dict({'x':self.ctrs[1],
                                                        'y':self.ctrs[0],
-                                                       't':self.ctrs[2], 
+                                                       't':self.ctrs[2],
                                                        'z':np.zeros(self.shape, dtype=bool)})
                 # three-dimensional mask, last dimension is time
                 for t_ind, this_t in enumerate(self.ctrs[2]):
@@ -211,7 +212,7 @@ class fd_grid(object):
                             )
                     else:
                         # interpolate the mask in time to the current epoch
-                        i_t=np.min(mask_data.t>this_t)-1
+                        i_t=np.argmin(mask_data.t<this_t)-1
                         W=np.array(([mask_data.t[i_t+1]-this_t, this_t-mask_data.t[i_t]]))/(mask_data.t[i_t+1]-mask_data.t[i_t])
                         this_mask_data=pc.grid.data().from_dict(
                             {'x': mask_data.x,'y':mask_data.y, \

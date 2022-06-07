@@ -20,7 +20,7 @@ from LSsurf.inv_tr_upper import inv_tr_upper
 from LSsurf.bias_functions import assign_bias_ID, setup_bias_fit, parse_biases
 from LSsurf.grid_functions import setup_grids, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
-                                    setup_mask
+                                    validate_by_dz_mask, setup_mask
 from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
@@ -115,13 +115,13 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         rs_data=r_data/data.sigma
         if last_iteration:
             break
-        
+
         if 'sigma_extra_bin_spacing' not in args or args['sigma_extra_bin_spacing'] is None:
             # calculate the additional error needed to make the robust spread of the scaled residuals equal to 1
             sigma_extra=calc_sigma_extra(r_data, data.sigma, in_TSE, sigma_extra_masks)
         else:
             sigma_extra=calc_sigma_extra_on_grid(data.x, data.y, r_data, data.sigma, in_TSE,
-                                                 sigma_extra_masks=sigma_extra_masks, 
+                                                 sigma_extra_masks=sigma_extra_masks,
                                                  spacing=args['sigma_extra_bin_spacing'])
         sigma_aug=np.sqrt(data.sigma**2 + sigma_extra**2)
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
@@ -347,8 +347,10 @@ def smooth_xytb_fit_aug(**kwargs):
 
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
-    if args['mask_file'] is not None:
+    if args['mask_file'] is not None and grids['dz'].mask_3d is None:
         setup_mask(data, grids, valid_data, bds, args)
+    else:
+        validate_by_dz_mask(data, grids, valid_data)
 
     # update the sigma_extra_masks variable to the data mask
     if args['sigma_extra_masks'] is not None:
@@ -449,7 +451,7 @@ def smooth_xytb_fit_aug(**kwargs):
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
 
     # setup operators that take averages of the grid at different scales
-    averaging_ops = setup_averaging_ops(grids['dz'], G_data.col_N, args)
+    averaging_ops=setup_averaging_ops(grids['dz'], grids['z0'].col_N, args, grids['dz'].cell_area)
 
     # setup masked averaging ops
     averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
@@ -496,7 +498,7 @@ def smooth_xytb_fit_aug(**kwargs):
         # if sigma_extra is not a data field, make a generous assumption
         if not 'sigma_extra' in data.fields:
             data.assign({'sigma_extra': np.zeros_like(data.sigma)})
-        
+
         # rebuild TCinv to take into account the extra error
         TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+data.sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))
 

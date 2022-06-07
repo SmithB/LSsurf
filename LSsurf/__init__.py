@@ -17,7 +17,8 @@ from LSsurf.grid_functions import setup_grids, \
                                 calc_cell_area, \
                                 setup_averaging_ops, \
                                 setup_avg_mask_ops, \
-                                setup_mask
+                                setup_mask,\
+                                validate_by_dz_mask
 
 from LSsurf.unique_by_rows import unique_by_rows
 from LSsurf.match_priors import match_tile_edges, match_prior_dz

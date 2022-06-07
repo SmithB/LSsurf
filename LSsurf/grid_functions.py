@@ -46,14 +46,12 @@ def setup_grids(args):
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
     z0_mask_data=None
+    z0_mask_data=None
     if args['mask_data'] is not None:
-        # use mask_data for preference over the mask file
         mask_file = None
         if len(args['mask_data'].shape)==3:
-            # if we have a 3D mask data, make a z0 mask that is the union of all
-            # time epochs
             z0_mask_data=args['mask_data'].copy()
-            valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t < bds['t'][-1])
+            valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t <= bds['t'][-1])
             z0_mask_data=pc.grid.data().from_dict({
                 'x':args['mask_data'].x,
                 'y':args['mask_data'].y,
@@ -91,7 +89,7 @@ def setup_grids(args):
                     di = (this_t - mask_data.t[i_t])/(mask_data.t[i_t+1]-mask_data.t[i_t])
                     this_mask = pc.grid.data().from_dict({'x':mask_data.x,
                                                           'y':mask_data.y,
-                                                          'z':mask_data.z[:,:,i_t]*(1-di)+mask_data.z[:,:,i_t+1]*di})
+                                                          'z':((mask_data.z[:,:,i_t]*(1-di)+mask_data.z[:,:,i_t+1]*di)>0.9).astype(float)})
                     temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
                          name='z0', srs_proj4=args['srs_proj4'], \
                         mask_data=this_mask)
@@ -271,7 +269,8 @@ def setup_mask(data, grids, valid_data, bds, args):
         data.index(~(data_mask==0))
         valid_data[valid_data]= ~(data_mask==0)
 
-def validate_by_3d_mask(data, grids, valid_data):
+
+def validate_by_dz_mask(data, grids, valid_data):
 
     '''
     Mark datapoints for which the grids['dz'] mask_3d is zero as invalid
@@ -281,5 +280,13 @@ def validate_by_3d_mask(data, grids, valid_data):
     valid_data: (numpy boolean array, size(data)) indicates valid data points
 
     '''
-    data_mask=lin_op(grids['dz'], name='interp_z').interp_mtx(data.coords()).toCSR().dot(grids['dz'].mask_3d.ravel())
-    valid_data &= data_mask > 0.5
+    if grids['mask_3d'] is not None:
+        data_mask=lin_op(grids['dz'], name='interp_z').interp_mtx(data.coords()).toCSR().dot(grids['dz'].mask_3d.ravel().astype(float))
+    else:
+        data_mask=lin_op(grids['dz'], name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['dz'].mask.ravel().astype(float))
+
+    data_mask[~np.isfinite(data_mask)]=0
+    data_mask = data_mask > 0.5
+    if np.any(data_mask==0):
+        data.index(~(data_mask==0))
+        valid_data[valid_data]= ~(data_mask==0)

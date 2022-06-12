@@ -460,7 +460,8 @@ class lin_op:
         else:
             ind0=self.dst_ind0
         P=np.zeros(grid.col_N+1)+np.NaN
-        P[ind0]=self.toCSR(row_N=ind0.size).dot(m).ravel()
+        # added col_N=m.size
+        P[ind0]=self.toCSR(row_N=ind0.size, col_N=m.size).dot(m).ravel()
         return P[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def grid_error(self, Rinv, grid=None):
@@ -475,7 +476,7 @@ class lin_op:
         else:
             ind0=self.dst_ind0
         E=np.zeros(self.col_N)+np.NaN
-        E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size).dot(Rinv)).power(2).sum(axis=1)).ravel()
+        E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size, col_N=Rinv.shape[0]).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def vstack(self, ops, order=None, name=None, TOC_cols=None):

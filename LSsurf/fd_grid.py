@@ -18,7 +18,8 @@ class fd_grid(object):
     # first global index can be shifted by specifying a nonzero col_0 value,
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
-    def __init__(self, bounds, deltas, col_0=0, col_N=None, srs_proj4=None, mask_file=None, mask_data=None, name=''):
+    def __init__(self, bounds, deltas, name='', col_0=0, col_N=None, srs_proj4=None, \
+                 mask_file=None, mask_data=None, mask_interp_threshold=0.5):
         self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
@@ -30,6 +31,7 @@ class fd_grid(object):
         self.srs_proj4=srs_proj4 # Well Known Text for the spatial reference system of the grid
         self.user_data=dict() # storage space
         self.name=name # name of the degree of freedom specified by the grid
+        self.mask_interp_threshold=mask_interp_threshold
         self.cell_area=None
         if col_N is None:
             self.col_N=self.col_0+self.N_nodes
@@ -37,7 +39,8 @@ class fd_grid(object):
             self.col_N=col_N
         self.mask=np.ones(self.shape[0:2], dtype=bool)
         self.mask_3d=None
-        self.setup_mask(mask_data=mask_data, mask_file=mask_file)
+        self.setup_mask(mask_data=mask_data, mask_file=mask_file, 
+                        interp_threshold=self.mask_interp_threshold)
 
     def copy(self):
         return copy.deepcopy(self)
@@ -175,7 +178,7 @@ class fd_grid(object):
             local_mask=mask_data
         return local_mask
 
-    def setup_mask(self, mask_data=None, mask_file=None):
+    def setup_mask(self, mask_data=None, mask_file=None, interp_threshold=0.5):
         if mask_data is None:
             # ignore the mask file if mask_data is provided
             self.mask_file=mask_file
@@ -218,7 +221,7 @@ class fd_grid(object):
                             {'x': mask_data.x,'y':mask_data.y, \
                              'z':mask_data.z[:,:, i_t]*W[0]+mask_data.z[:,:, i_t+1]*W[1]}
                             )
-                    self.mask_3d.z[:,:,t_ind]=this_mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > 0.5
+                    self.mask_3d.z[:,:,t_ind]=this_mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > interp_threshold
             else:
                 self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > 0.5
 

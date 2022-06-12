@@ -19,6 +19,7 @@ from LSsurf.grid_functions import setup_grids, \
                                 setup_avg_mask_ops, \
                                 setup_mask,\
                                 validate_by_dz_mask
-
+from LSsurf.calc_sigma_extra import calc_sigma_extra,\
+    calc_sigma_extra_on_grid
 from LSsurf.unique_by_rows import unique_by_rows
 from LSsurf.match_priors import match_tile_edges, match_prior_dz

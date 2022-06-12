@@ -67,7 +67,7 @@ def setup_grids(args):
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
                         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
                         name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-                        mask_file=mask_file, mask_data=args['mask_data'])
+                        mask_file=mask_file, mask_data=args['mask_data'], mask_interp_threshold=0.95)
 
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
@@ -101,6 +101,7 @@ def setup_grids(args):
     # last-- multiply the z0 cell area by the z0 mask
     if grids['z0'].mask is not None:
         grids['z0'].cell_area *= grids['z0'].mask
+    return grids, bds
 
 def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None, taper=True):
     # calculate the area of masked cells in a fine grid within the cells of a coarse grid
@@ -280,10 +281,15 @@ def validate_by_dz_mask(data, grids, valid_data):
     valid_data: (numpy boolean array, size(data)) indicates valid data points
 
     '''
-    if grids['mask_3d'] is not None:
-        data_mask=lin_op(grids['dz'], name='interp_z').interp_mtx(data.coords()).toCSR().dot(grids['dz'].mask_3d.ravel().astype(float))
+    temp_grid=grids['dz'].copy()
+    temp_grid.col_0=0
+    temp_grid.col_N=np.prod(temp_grid.shape)
+    if grids['dz'].mask_3d is not None:
+        data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()).toCSR().\
+            dot(grids['dz'].mask_3d.z.ravel().astype(float))
     else:
-        data_mask=lin_op(grids['dz'], name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['dz'].mask.ravel().astype(float))
+        data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().\
+            dot(grids['dz'].mask.z.ravel().astype(float))
 
     data_mask[~np.isfinite(data_mask)]=0
     data_mask = data_mask > 0.5

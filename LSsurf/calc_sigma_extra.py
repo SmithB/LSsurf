@@ -42,7 +42,7 @@ def calc_sigma_extra(r, sigma, mask, sigma_extra_masks=None):
 
 
 def calc_sigma_extra_on_grid(x, y, r, sigma, in_TSE, sigma_extra_masks=None, 
-                             spacing=1.e4, L_avg=2.e4):
+                             spacing=1.e4, L_avg=None, sigma_extra_max=None):
     ''' calculate sigma_extra based on an overlapping grid of points
     
 
@@ -64,6 +64,9 @@ def calc_sigma_extra_on_grid(x, y, r, sigma, in_TSE, sigma_extra_masks=None,
         The default is 1.e4.
     L_avg : float, optional
         width of bins into which to collect the data. If None, 2*spacing is used
+        The default is None
+    sigma_extra_max: float, optional
+        the maximum value for sigma_extra.  
         The default is None
 
     Returns
@@ -90,6 +93,8 @@ def calc_sigma_extra_on_grid(x, y, r, sigma, in_TSE, sigma_extra_masks=None,
         if np.sum(these) < 10:
             continue
         this_sigma_extra = calc_sigma_extra(r, sigma, these, sigma_extra_masks=sigma_extra_masks)
+        if sigma_extra_max is not None:
+            this_sigma_extra = np.minimum(this_sigma_extra, sigma_extra_max)
         W = in_bin * (1-dx/(L_avg/2)) * (1-dy/(L_avg/2))
         sum_W_sigma += W*this_sigma_extra
         sum_W += W
@@ -97,4 +102,5 @@ def calc_sigma_extra_on_grid(x, y, r, sigma, in_TSE, sigma_extra_masks=None,
     sigma_extra=np.zeros_like(r) + sigma_extra_full
     these=sum_W > 0
     sigma_extra[these] = sum_W_sigma[ these ]/sum_W[ these ]
+
     return sigma_extra

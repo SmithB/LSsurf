@@ -122,6 +122,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         else:
             sigma_extra=calc_sigma_extra_on_grid(data.x, data.y, r_data, data.sigma, in_TSE,
                                                  sigma_extra_masks=sigma_extra_masks,
+                                                 sigma_extra_max=args['sigma_extra_max'],
                                                  spacing=args['sigma_extra_bin_spacing'])
         sigma_aug=np.sqrt(data.sigma**2 + sigma_extra**2)
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
@@ -290,6 +291,7 @@ def smooth_xytb_fit_aug(**kwargs):
     'max_iterations':10,
     'min_iterations':2,
     'sigma_extra_bin_spacing':None,
+    'sigma_extra_max':None,
     'srs_proj4': None,
     'N_subset': None,
     'bias_params': None,

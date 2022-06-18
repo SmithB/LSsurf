@@ -152,19 +152,25 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
         # build the not-averaged dz/dt operators (these are not masked)
         for lag in args['dzdt_lags']:
             this_name='dzdt_lag'+str(lag)
-            op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
-            # Map the cell area for the nonzero cells in the operator to the output grid
-            temp=sp.coo_matrix(((op.v !=0 ).astype(float),(op.r, op.c-grid.col_0)), \
-                               shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
-            # use this matrix to identify the cells that do not have first and last values
-            # witin the mask
-            num_cells = temp.dot(grid.mask_3d.z.ravel().astype(float))
-            op.v[np.in1d(op.r, np.flatnonzero(num_cells<2))]=0
-            # recreate the matrix with the updated operator:
-            temp=sp.coo_matrix((np.abs(op.v)*0.5*lag*grid.delta[2],(op.r, op.c-grid.col_0)), \
-                               shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
-            # use this matrix to calculate the cell area
-            op.dst_grid.cell_area = temp.dot(grid.cell_area.ravel()).reshape(op.dst_grid.shape)
+            if grid.mask_3d is not None:
+                op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
+                # Map the cell area for the nonzero cells in the operator to the output grid
+                temp=sp.coo_matrix(((op.v !=0 ).astype(float),(op.r, op.c-grid.col_0)), \
+                                   shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
+                # use this matrix to identify the cells that do not have first and last values
+                # within the mask
+                num_cells = temp.dot(grid.mask_3d.z.ravel().astype(float))
+                op.v[np.in1d(op.r, np.flatnonzero(num_cells<2))]=0
+                # recreate the matrix with the updated operator:
+                temp=sp.coo_matrix((np.abs(op.v)*0.5*lag*grid.delta[2],(op.r, op.c-grid.col_0)), \
+                                   shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
+                # use this matrix to calculate the cell area
+                op.dst_grid.cell_area = temp.dot(grid.cell_area.ravel()).reshape(op.dst_grid.shape)
+            else:
+                # no 3-d mask, just use the mask in the grid
+                op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
+                op.dst_grid.cell_area=grid.cell_area
+                
             ops[this_name]=op
 
     # make the averaged ops
@@ -210,25 +216,32 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
 
         for lag in args['dzdt_lags']:
             dz_name='avg_dzdt_'+str(int(scale))+'m'+'_lag'+str(lag)
-            op=lin_op(grid, name=this_name, col_N=col_N)\
-                .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
-                    .apply_mask(mask=grid.mask_3d.z, time_step_overlap=2)\
-                    .apply_mask(mask=cell_area)
-
-            # make an sparse matrix that is like the time-difference operator,
-            # but with half the absolute value of the entries.  When this is
-            # multiplied by the cell area, it will calculate the area within each
-            # coarse cell.  This is similar to what sum_cell_area does, but takes
-            # into account the time-varying mask.
-            temp=sp.coo_matrix((np.abs(op.v )*0.5*grid.delta[2],(op.r, op.c-grid.col_0)), \
-                               shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
-            op.dst_grid.cell_area = temp.dot(np.ones_like(grid.cell_area.ravel()))\
-                .reshape(op.dst_grid.cell_area)
-            #grid.cell_area.ravel()).reshape(op.dst_grid.shape)
-            #op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, \
-            #                                      sub0s=sub0s, \
-            #                                      cell_area_f=cell_area, \
-            #                                      time_step_overlap=2)
+            if grid.mask_3d is not None:
+                # 3D mask: need to handle the overlap between time steps
+                op=lin_op(grid, name=this_name, col_N=col_N)\
+                    .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
+                        .apply_mask(mask=grid.mask_3d.z, time_step_overlap=2)\
+                        .apply_mask(mask=cell_area)
+    
+                # make an sparse matrix that is like the time-difference operator,
+                # but with half the absolute value of the entries.  When this is
+                # multiplied by the cell area, it will calculate the area within each
+                # coarse cell.  This is similar to what sum_cell_area does, but takes
+                # into account the time-varying mask.
+                temp=sp.coo_matrix((np.abs(op.v )*0.5*grid.delta[2],(op.r, op.c-grid.col_0)), \
+                                   shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
+                op.dst_grid.cell_area = temp.dot(np.ones_like(grid.cell_area.ravel()))\
+                    .reshape(op.dst_grid.cell_area)
+                #grid.cell_area.ravel()).reshape(op.dst_grid.shape)
+                #op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, \
+                #                                      sub0s=sub0s, \
+                #                                      cell_area_f=cell_area, \
+                #                                      time_step_overlap=2)
+            else:
+                #2D mask: just use the mask as is
+                op=lin_op(grid, name=this_name, col_N=col_N)\
+                    .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
+                    .apply_2d_mask(mask=cell_area)
             if cell_area is not None:
                 # the appropriate weight is expected number of nonzero elements
                 # for each nonzero node, times the weight for each time step

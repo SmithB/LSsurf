@@ -148,7 +148,7 @@ class fd_grid(object):
         mask_ds = pc.grid.data().from_dict({'x':self.ctrs[1], 'y':self.ctrs[0], 'z':np.zeros(self.shape[0:2])})\
             .to_gdal(srs_proj4=self.srs_proj4)
 
-        vector_mask=ogr.Open(mask_file)
+        vector_mask=ogr.Open(mask_file,  0) # 0 is read-only
         mask_layer=vector_mask.GetLayer()
         gdal.RasterizeLayer(mask_ds, [1], mask_layer, burn_values=[1])
         vector_mask=None
@@ -196,6 +196,11 @@ class fd_grid(object):
                 self.mask=self.burn_mask(self.mask_file)
         elif mask_data is not None:
             mask_is_3d = len(mask_data.shape) > 2
+            if isinstance(mask_data,  np.ndarray):
+                # if a mask array is provided, use it
+                self.mask=mask_data.astype(bool)
+                if mask_is_3d:
+                    self.mask_3d=mask_data.astype(bool)
             mask_data=self.make_eroded_source_mask(mask_data, mask_is_3d)
 
             if mask_is_3d:

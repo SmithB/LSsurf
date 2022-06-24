@@ -46,10 +46,11 @@ def setup_grids(args):
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
     z0_mask_data=None
-    z0_mask_data=None
     if args['mask_data'] is not None:
         mask_file = None
-        if len(args['mask_data'].shape)==3:
+        if isinstance(args['mask_data'], dict):
+            z0_mask_data=args['mask_data']['z0']
+        elif len(args['mask_data'].shape)==3:
             z0_mask_data=args['mask_data'].copy()
             valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t <= bds['t'][-1])
             z0_mask_data=pc.grid.data().from_dict({
@@ -64,10 +65,24 @@ def setup_grids(args):
                         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
                         mask_data=z0_mask_data)
 
+    mask_interp_threshold=0.95 # interpolated masks should cover a  minimal area
+    dz_mask_data=args['mask_data']
+    if isinstance(args['mask_data'], dict):
+        # if we have specified a 
+        if args['spacing']['dz']==np.diff(args['mask_data']['dz'][0:2]):
+            # if the stored grid spacing is the same as that requested here,just
+            # copy it
+            dz_mask_data=dz_mask_data.z
+        else:
+            # otherwise, interpolate values from the grid object
+            dz_mask_data=args['mask_data']['dz']
+            mask_interp_threshold=0.5 # make a faithful copy of the input grid
+
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
                         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
                         name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-                        mask_file=mask_file, mask_data=args['mask_data'], mask_interp_threshold=0.95)
+                        mask_file=mask_file, mask_data=dz_mask_data,\
+                        mask_interp_threshold = mask_interp_threshold)
 
     grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')

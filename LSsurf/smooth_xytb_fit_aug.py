@@ -286,6 +286,7 @@ def smooth_xytb_fit_aug(**kwargs):
     'W_ctr':1e4,
     'mask_file':None,
     'mask_data':None,
+    'mask_update_function':None,
     'mask_scale':None,
     'compute_E':False,
     'max_iterations':10,
@@ -317,6 +318,7 @@ def smooth_xytb_fit_aug(**kwargs):
     'bias_nsigma_iteration':2,
     'bias_edit_vals':None,
     'sensor_grid_bias_params':None,
+    'ancillary_data':None,
     'VERBOSE': True}
     args.update(kwargs)
     for field in required_fields:
@@ -329,7 +331,7 @@ def smooth_xytb_fit_aug(**kwargs):
     E={}
     R={}
     RMS={}
-
+    averaging_ops={}
     tic=time()
     # define the grids
     grids, bds = setup_grids(args)
@@ -452,12 +454,6 @@ def smooth_xytb_fit_aug(**kwargs):
     # put the fit and constraint matrices together
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
 
-    # setup operators that take averages of the grid at different scales
-    averaging_ops=setup_averaging_ops(grids['dz'], grids['z0'].col_N, args, grids['dz'].cell_area)
-
-    # setup masked averaging ops
-    averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
-
     # define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution:
     Ip_c = build_reference_epoch_matrix(G_data, Gc, grids, args['reference_epoch'])
 
@@ -490,6 +486,17 @@ def smooth_xytb_fit_aug(**kwargs):
 
         # report the model-based estimate of the data points
         data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
+
+        if args['mask_update_function'] is not None:
+            parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
+            args['mask_update_function'](grids, m, args)
+
+        # setup operators that take averages of the grid at different scales
+        averaging_ops=setup_averaging_ops(grids['dz'], grids['z0'].col_N, args, grids['dz'].cell_area)
+
+        # setup masked averaging ops
+        averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+
         parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
         r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
         R['data']=np.sum(((r_data/data.sigma[data.three_sigma_edit==1])**2))

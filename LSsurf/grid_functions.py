@@ -68,10 +68,11 @@ def setup_grids(args):
     mask_interp_threshold=0.95 # interpolated masks should cover a  minimal area
     dz_mask_data=args['mask_data']
     if isinstance(args['mask_data'], dict):
-        # if we have specified a 
-        if args['spacing']['dz']==np.diff(args['mask_data']['dz'][0:2]):
+        # if we have specified a dictionary for mask_data, use the 'dz' component
+        if args['spacing']['dz']==np.diff(args['mask_data']['dz'].x[0:2]):
             # if the stored grid spacing is the same as that requested here,just
             # copy it
+            print("\n---copying dz mask---")
             dz_mask_data=dz_mask_data.z
         else:
             # otherwise, interpolate values from the grid object
@@ -88,23 +89,24 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
 
-    mask_data=args['mask_data']
+    
     if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
-        if mask_data is not None and mask_data.t is not None and len(mask_data.t) > 1:
+        if dz_mask_data is not None and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:
             # we have a time-dependent grid
             grids['dz'].cell_area = np.zeros(grids['dz'].shape)
             for t_ind, this_t in enumerate(grids['dz'].ctrs[2]):
-                if this_t <= mask_data.t[0]:
-                    this_mask=mask_data[:,:,0]
-                elif this_t >= mask_data.t[-1]:
-                    this_mask=mask_data[:,:,-1]
+                if this_t <= dz_mask_data.t[0]:
+                    this_mask=dz_mask_data[:,:,0]
+                elif this_t >= dz_mask_data.t[-1]:
+                    this_mask=dz_mask_data[:,:,-1]
                 else:
-                    # find the first time slice of mask_data that is gt this time
-                    i_t = np.argmin(mask_data.t < this_t)-1
-                    di = (this_t - mask_data.t[i_t])/(mask_data.t[i_t+1]-mask_data.t[i_t])
-                    this_mask = pc.grid.data().from_dict({'x':mask_data.x,
-                                                          'y':mask_data.y,
-                                                          'z':((mask_data.z[:,:,i_t]*(1-di)+mask_data.z[:,:,i_t+1]*di)>0.9).astype(float)})
+                    # find the first time slice of mask_data that is gt this time, do a linear interpolation in time
+                    # CHECK IF THESE ARE THE RIGHT INDICES
+                    i_t = np.argmin(dz_mask_data.t < this_t)-1
+                    di = (this_t - dz_mask_data.t[i_t])/(dz_mask_data.t[i_t+1]-dz_mask_data.t[i_t])
+                    this_mask = pc.grid.data().from_dict({'x':dz_mask_data.x,
+                                                          'y':dz_mask_data.y,
+                                                          'z':((dz_mask_data.z[:,:,i_t]*(1-di)+dz_mask_data.z[:,:,i_t+1]*di)>0.9).astype(float)})
                     temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
                          name='z0', srs_proj4=args['srs_proj4'], \
                         mask_data=this_mask)

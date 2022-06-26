@@ -102,7 +102,9 @@ def setup_grids(args):
                 else:
                     # find the first time slice of mask_data that is gt this time, do a linear interpolation in time
                     # CHECK IF THESE ARE THE RIGHT INDICES
-                    i_t = np.argmin(dz_mask_data.t < this_t)-1
+                    #Note: argmax returns the first index of the maximum of an array
+                    # so for a boolean, it identifies the first occurence
+                    i_t = np.argmax(dz_mask_data.t > this_t)-1
                     di = (this_t - dz_mask_data.t[i_t])/(dz_mask_data.t[i_t+1]-dz_mask_data.t[i_t])
                     this_mask = pc.grid.data().from_dict({'x':dz_mask_data.x,
                                                           'y':dz_mask_data.y,

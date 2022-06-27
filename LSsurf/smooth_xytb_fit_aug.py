@@ -501,6 +501,12 @@ def smooth_xytb_fit_aug(**kwargs):
         r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
         R['data']=np.sum(((r_data/data.sigma[data.three_sigma_edit==1])**2))
         RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
+    else:
+        # still need to make the averaging ops
+        averaging_ops=setup_averaging_ops(grids['dz'], grids['z0'].col_N, args, grids['dz'].cell_area)
+        # setup masked averaging ops
+        averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+
 
     # Compute the error in the solution if requested
     if args['compute_E']:

@@ -608,13 +608,13 @@ class lin_op:
         self.r, self.c, self.v=[temp.row, temp.col, temp.data]
         return self
 
-    def apply_mask(self, mask=None, time_step_overlap=1):
+    def apply_mask(self, mask=None, row_N=None, time_step_overlap=1):
         # multiply array elements by the values in a mask
         # This function handles either 2d or 3d masks
         # if no mask is specified, use self.grid.mask
         if mask is None:
             mask=self.grid.mask
-        csr=self.toCSR()
+        csr=self.toCSR(row_N=row_N, col_N=self.col_N)
 
         for row in range(csr.shape[0]):
             # get the indices of the nonzero entries for the row

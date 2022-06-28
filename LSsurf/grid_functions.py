@@ -240,9 +240,10 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
             if grid.mask_3d is not None:
                 # 3D mask: need to handle the overlap between time steps
                 op=lin_op(grid, name=this_name, col_N=col_N)\
-                    .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
-                        .apply_mask(mask=grid.mask_3d.z, time_step_overlap=2)\
-                        .apply_mask(mask=cell_area)
+                    .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)
+                row_N=np.max(op.r)+1
+                op.apply_mask(mask=grid.mask_3d.z, time_step_overlap=2, row_N=row_N)\
+                        .apply_mask(mask=cell_area, row_N=row_N)
     
                 # make an sparse matrix that is like the time-difference operator,
                 # but with half the absolute value of the entries.  When this is
@@ -260,9 +261,10 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 #                                      time_step_overlap=2)
             else:
                 #2D mask: just use the mask as is
-                op=lin_op(grid, name=this_name, col_N=col_N)\
-                    .sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
-                    .apply_2d_mask(mask=cell_area)
+                op=lin_op(grid, name=this_name, col_N=col_N)
+                row_N=np.max(op.r)
+                op.sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
+                    .apply_2d_mask(mask=cell_area, row_N=row_N)
             if cell_area is not None:
                 # the appropriate weight is expected number of nonzero elements
                 # for each nonzero node, times the weight for each time step

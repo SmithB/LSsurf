@@ -111,10 +111,10 @@ def setup_grids(args):
                     this_mask = pc.grid.data().from_dict({'x':dz_mask_data.x,
                                                           'y':dz_mask_data.y,
                                                           'z':((dz_mask_data.z[:,:,i_t]*(1-di)+dz_mask_data.z[:,:,i_t+1]*di)>0.9).astype(float)})
-                    temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-                         name='z0', srs_proj4=args['srs_proj4'], \
-                        mask_data=this_mask)
-                    grids['dz'].cell_area[:,:,t_ind] = sum_cell_area(temp_grid, grids['dz'])
+                temp_grid = fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
+                     name='z0', srs_proj4=args['srs_proj4'], \
+                    mask_data=this_mask)
+                grids['dz'].cell_area[:,:,t_ind] = sum_cell_area(temp_grid, grids['dz'])
         else:
             grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
     else:

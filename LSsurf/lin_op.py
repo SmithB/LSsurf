@@ -628,16 +628,17 @@ class lin_op:
                 csr[row, inds]=0.
                 continue
             if time_step_overlap > 1:
-                # Count the time steps overlapped for each 2-d grid cell
+                #Here, we ount the time steps overlapped for each 2-d grid cell
+                # First, find the 2D indices of each entry in the operator row
                 inds_2d = np.ravel_multi_index(subs[0:2],  mask.shape[0:2])
-                # matrix that maps the 3-D cells to the 2-D cells
+                # build a matrix that maps the 3-D cells to the 2-D cells
                 twoD_to_3D = sp.coo_matrix((np.ones_like(inds), (inds_2d, inds-self.grid.col_0)),
                                                  shape=(np.max(inds_2d)+1, mask.size))
-                # find 2-D cells that contain enough time steps
+                # Multiplying this matrix by the mask counts the entries in the
+                # 3D mask included in each cell
                 enough_cells = twoD_to_3D.dot(mask.ravel()) >= time_step_overlap
-                # map those 2-D cells back to the 3-D index
+                # map the 2-D cells with enough 3D entries back to the 3-D index
                 overlap_mask = twoD_to_3D.T.dot(enough_cells.astype(float))
-
             # want to do: csr[row,inds] *= mask.ravel()[mask_ind]
             # but need to add a toarray() step to avoid broadcasting rules
             temp = csr[row, inds].toarray()

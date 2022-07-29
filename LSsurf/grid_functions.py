@@ -91,7 +91,7 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
 
-    
+
     if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
         if dz_mask_data is not None and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:
             # we have a time-dependent grid
@@ -191,7 +191,7 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 # no 3-d mask, just use the mask in the grid
                 op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
                 op.dst_grid.cell_area=grid.cell_area
-                
+
             ops[this_name]=op
 
     # make the averaged ops
@@ -244,16 +244,16 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 row_N=np.max(op.r)+1
                 op.apply_mask(mask=grid.mask_3d.z, time_step_overlap=2, row_N=row_N)\
                         .apply_mask(mask=cell_area, row_N=row_N)
-    
-                # make an sparse matrix that is like the time-difference operator,
+
+                # make a sparse matrix that is like the time-difference operator,
                 # but with half the absolute value of the entries.  When this is
                 # multiplied by the cell area, it will calculate the area within each
                 # coarse cell.  This is similar to what sum_cell_area does, but takes
                 # into account the time-varying mask.
-                temp=sp.coo_matrix((np.abs(op.v )*0.5*grid.delta[2],(op.r, op.c-grid.col_0)), \
+                temp=sp.coo_matrix((np.abs(op.v )*0.5*grid.delta[2]*lag,(op.r, op.c-grid.col_0)), \
                                    shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
                 op.dst_grid.cell_area = temp.dot(np.ones_like(grid.cell_area.ravel()))\
-                    .reshape(op.dst_grid.cell_area)
+                    .reshape(op.dst_grid.shape)
                 #grid.cell_area.ravel()).reshape(op.dst_grid.shape)
                 #op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, \
                 #                                      sub0s=sub0s, \

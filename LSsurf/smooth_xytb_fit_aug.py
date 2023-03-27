@@ -514,9 +514,11 @@ def smooth_xytb_fit_aug(**kwargs):
 
     # Compute the error in the solution if requested
     if args['compute_E']:
-        # if sigma_extra is not a data field, make a generous assumption
+        # if sigma_extra is not a data field, assume it is zero
         if not 'sigma_extra' in data.fields:
             data.assign({'sigma_extra': np.zeros_like(data.sigma)})
+            r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
+            data.sigma_extra[data.three_sigma_edit==1] = calc_sigma_extra(r_data, data.sigma[data.three_sigma_edit==1])
 
         # rebuild TCinv to take into account the extra error
         TCinv=sp.dia_matrix((1./np.concatenate((np.sqrt(Ed**2+data.sigma_extra**2), Ec)), 0), shape=(N_eq, N_eq))

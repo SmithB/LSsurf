@@ -190,7 +190,7 @@ class fd_grid(object):
             # geotif:
             if self.mask_file.endswith('.tif'):
                 self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
-                self.mask=np.round(self.mask).astype(np.int)
+                self.mask=np.round(self.mask).astype(int)
             # vector (add more formats as needed)
             elif self.mask_file.endswith('.shp') or self.mask_file.endswith('.db'):
                 self.mask=self.burn_mask(self.mask_file)

@@ -26,7 +26,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
     """
     Assign a value to each data point that determines which biases are applied to it.
 
-    parameters:
+    Parameters:
         data: pointCollection.data instance
         bias_parameters: a list of parameters, each unique combination of which
           defines a different bias
@@ -47,31 +47,36 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
         bias_model['bias_ID_dict'][p0+1]=key_name
         bias_ID=p0+1
         bias_model['E_bias'][p0+1]=np.nanmedian(data.sigma_corr)
+        data.assign({bias_name:bias_ID})
+        return data, bias_model
+    bias_ID=np.zeros(data.size)
+    if bias_filter is not None:
+        data_filt=bias_filter(data)
     else:
-        bias_ID=np.zeros(data.size)
-        if bias_filter is not None:
-            data_filt=bias_filter(data)
-        else:
-            data_filt=data
-        temp=np.column_stack([getattr(data_filt, bp) for bp in bias_params])
-
-        u_p, i_p=unique_by_rows(temp, return_index=True)
-        bias_model['bias_param_dict'].update({param:list() for param in bias_params})
-        bias_model['bias_param_dict'].update({'ID':list()})
-        for p_num, param_vals in enumerate(u_p):
-            this_mask=np.ones(data.size, dtype=bool)
-            param_vals_dict={}
-            #Identify the data that match the parameter values
-            for i_param, param in enumerate(bias_params):
-                this_mask = this_mask & (getattr(data, param)==param_vals[i_param])
-                param_vals_dict[param]=param_vals[i_param]
-                #this_name += '%s%3.2f' % (param, param_vals[i_param])
-                bias_model['bias_param_dict'][param].append(param_vals[i_param])
-            bias_model['bias_param_dict']['ID'].append(p0+p_num)
-            this_ind=np.where(this_mask)[0]
-            bias_ID[this_ind]=p0+p_num
-            bias_model['bias_ID_dict'][p0+p_num]=param_vals_dict
-            bias_model['E_bias'][p0+p_num]=np.nanmedian(data.sigma_corr[this_ind])
+        data_filt=data
+    temp=np.column_stack([getattr(data_filt, bp) for bp in bias_params])
+    # set NaN param values to -9999 so that they are put into the same category
+    # Could update pc.unique_by_rows to do this
+    NDV=-9999
+    temp=np.nan_to_num(temp, nan=NDV)
+    u_p, this_param_dict=pc.unique_by_rows(temp, return_dict=True)
+    bias_model['bias_param_dict'].update({param:list() for param in bias_params})
+    bias_model['bias_param_dict'].update({'ID':list()})
+    for p_num, param_vals in enumerate(u_p):
+        this_ind=this_param_dict[tuple(param_vals)]
+        # report invalid parameter values as NaN
+        out_param_vals=param_vals.copy()
+        out_param_vals[out_param_vals==NDV] = np.NaN
+        param_vals_dict={}
+        #Identify the data that match the parameter values
+        for i_param, param in enumerate(bias_params):
+            param_vals_dict[param] = out_param_vals[i_param]
+            #this_name += '%s%3.2f' % (param, param_vals[i_param])
+            bias_model['bias_param_dict'][param].append(param_vals[i_param])
+        bias_model['bias_param_dict']['ID'].append(p0+p_num)
+        bias_ID[this_ind]=p0+p_num
+        bias_model['bias_ID_dict'][p0+p_num]=param_vals_dict
+        bias_model['E_bias'][p0+p_num]=np.nanmedian(data.sigma_corr[this_ind])
     data.assign({bias_name:bias_ID})
     return data, bias_model
 

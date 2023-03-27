@@ -577,7 +577,7 @@ class lin_op:
             subs=np.unravel_index(inds, self.grid.mask.shape)
         temp=self.grid.mask[subs]
         if mask_scale is not None:
-            temp2=np.zeros_like(temp, dtype=np.float)
+            temp2=np.zeros_like(temp, dtype=float)
             for key in mask_scale.keys():
                 temp2[temp==key]=mask_scale[key]
             return temp2

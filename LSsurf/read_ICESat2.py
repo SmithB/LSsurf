@@ -37,7 +37,7 @@ def segDifferenceFilter(D6, tol=2, setValid=True, toNaN=False, subset=False):
     return mask
 
 
-def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2, blockmedian_scale=None, cplx_accept_threshold=0.):
+def read_ICESat2(xy0, W, gI_files, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2, blockmedian_scale=None, cplx_accept_threshold=0.):
     field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'], 
                 'fit_statistics':['dh_fit_dx', 'dh_fit_dy', 'n_fit_photons','w_surface_window_final','snr_significance'],
                 'geophysical':['tide_ocean'],
@@ -57,7 +57,10 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
          'y':np.r_[np.floor((xy0[1]-W['y']/2)/dx), np.ceil((xy0[1]+W['y']/2)/dx)+1]*dx}
     px, py=np.meshgrid(np.arange(bds['x'][0], bds['x'][1], dx),
                        np.arange(bds['y'][0], bds['y'][1], dx))
-    D0=pc.geoIndex().from_file(gI_file).query_xy((px.ravel(), py.ravel()), fields=fields)
+
+    D0=[]
+    for gI_file in gI_files:
+        D0 += pc.geoIndex().from_file(gI_file).query_xy((px.ravel(), py.ravel()), fields=fields)
     if D0 is None or len(D0)==0:
         return [None]
     # check the D6 filenames against the blacklist of bad files

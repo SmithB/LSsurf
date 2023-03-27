@@ -188,7 +188,7 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     # what should the tolerance be?  We will eventually square Rinv and take its
     # row-wise sum.  We care about errors at the cm level, so
     # size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
-    tic=time(); RR, CC, VV, status=inv_tr_upper(R, np.int(np.prod(R.shape)/4), 1.e-5);
+    tic=time(); RR, CC, VV, status=inv_tr_upper(R, int(np.prod(R.shape)/4), 1.e-5);
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
     tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
@@ -397,13 +397,17 @@ def smooth_xytb_fit_aug(**kwargs):
             data.three_sigma_edit[np.in1d(data.bias_ID, bad_IDs)]=False
     else:
         bias_model={}
+    
+    # check that the data_slope sensors are in the data that has passed the filtering steps
+    args['data_slope_sensors']=args['data_slope_sensors'][np.in1d(args['data_slope_sensors'], data.sensor)]
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors'])>0:
         bias_model['E_slope_bias']=args['E_slope_bias']
         G_slope_bias, Gc_slope_bias, bias_model = \
             data_slope_bias(data, bias_model, sensors=args['data_slope_sensors'],\
                             col_0=G_data.col_N, E_rms_bias=args['E_slope_bias'])
-        G_data.add(G_slope_bias)
-        constraint_op_list.append(Gc_slope_bias)
+        if G_slope_bias is not None:
+            G_data.add(G_slope_bias)
+            constraint_op_list.append(Gc_slope_bias)
 
     if args['sensor_grid_bias_params'] is not None:
         for params in args['sensor_grid_bias_params']:

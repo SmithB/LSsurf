@@ -6,8 +6,8 @@ ITYPE=np.int32
 ctypedef np.int32_t ITYPE_t
 LTYPE=np.int64
 ctypedef np.int64_t LTYPE_t
-FTYPE=np.float
-ctypedef np.float_t FTYPE_t
+FTYPE=np.float64
+ctypedef np.float64_t FTYPE_t
 from libc.math cimport abs
 
 
@@ -45,7 +45,7 @@ def inv_tr_upper(R,  np.int_t nnz, float tol):
     cdef np.ndarray[ITYPE_t, ndim=1] out_cols=np.zeros(nnz, dtype=ITYPE)
     cdef np.ndarray[FTYPE_t, ndim=1] out_vals=np.zeros(nnz, dtype=FTYPE)    
     # work matrix
-    cdef np.ndarray[FTYPE_t, ndim=1] x=np.zeros(R.shape[0], dtype=np.float) 
+    cdef np.ndarray[FTYPE_t, ndim=1] x=np.zeros(R.shape[0], dtype=FTYPE) 
     cdef Py_ssize_t N
     N=R.shape[0]
     out_ind=-1

@@ -29,10 +29,13 @@ def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'
              bias_model: bias model dict as defined in assign_bias_ID
              E_rms_bias : confidence that predicted slopes are zero
     """
-    if 'slope_bias_dict' not in bias_model:
-        bias_model['slope_bias_dict']={}
 
     these_sensors=sensors[np.in1d(sensors, data.sensor)]
+    if len(these_sensors)==0:
+        return None, None, bias_model
+
+    if 'slope_bias_dict' not in bias_model:
+        bias_model['slope_bias_dict']={}
 
     col_N=col_0+2*len(these_sensors)
     rr, cc, vv=[[], [], []]

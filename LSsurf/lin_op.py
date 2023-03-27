@@ -35,12 +35,18 @@ class lin_op:
         self.dst_grid=None
         self.dst_ind0=None
         self.expected=None
+        self.prior=None
         self.shape=None
         self.size=None
 
     def __update_size_and_shape__(self):
         self.shape = (self.N_eq, self.col_N)
 
+    def ravel(self):
+        self.r=self.r.ravel()
+        self.c=self.c.ravel()
+        self.v=self.v.ravel()
+        return self
 
     def diff_op(self, delta_subs, vals,  which_nodes=None, valid_equations_only=True):
         # build an operator that calculates linear combination of the surrounding
@@ -281,7 +287,7 @@ class lin_op:
         v0 /= v0.sum()
         y0=np.sum((self.grid.bds[0][0]+i0.ravel()*self.grid.delta[0])*v0)
         x0=np.sum((self.grid.bds[1][0]+j0.ravel()*self.grid.delta[1])*v0)
-        
+
         if len(self.grid.shape) < 3:
             # no time dimension: Just average the grid
             self.r = np.zeros_like(i0)
@@ -306,14 +312,14 @@ class lin_op:
         else:
             for ii in range(self.grid.shape[2]-dzdt_lag):
                 for dLag in [0, dzdt_lag]:
-                    rr += [np.zeros_like(i0)+ii]    
+                    rr += [np.zeros_like(i0)+ii]
                     cc += [self.grid.global_ind([i0, j0, np.zeros_like(i0) + ii+ dLag])]
                     if dLag==0:
                         vv += [-v0/dzdt_lag/self.grid.delta[2]]
                     else:
                         vv += [v0/dLag/self.grid.delta[2]]
             t_vals=self.grid.ctrs[-1][:-dzdt_lag] + self.grid.delta[-1]*dzdt_lag/2
-        self.r, self.c, self.v = [ np.concatenate(ii) for ii in [rr, cc, vv]] 
+        self.r, self.c, self.v = [ np.concatenate(ii) for ii in [rr, cc, vv]]
         self.dst_grid = fd_grid( [[y0, y0], [x0, x0], [t_vals[0], t_vals[-1]]], \
                                 self.grid.delta, 0,  col_N=self.r.max()+1,
                                 srs_proj4=self.grid.srs_proj4)
@@ -322,12 +328,30 @@ class lin_op:
         self.dst_ind0=np.arange(self.N_eq, dtype=int)
         return self
 
-    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, valid_equations_only=True, dims=None):
-        # make an operator that adds values with a kernel of size kernel_size pixels
-        # centered on the grid cells identified in sub0s
-        # optional: specify 'lag' to compute a dz/dt
-        # specify taper=True to include half-weights on edge points and
-        #          quarter-weights on corner points
+    def sum_to_grid3(self, kernel_size,  sub0s=None, lag=None, taper=True, \
+                     valid_equations_only=True, dims=None):
+        '''make an operator that adds together values around output grid points
+
+        Parameters
+        ----------
+        kernel_size : integer
+            Number of pixels to be averaged in each output grid cell
+        sub0s : iterable, optional
+            indexes of central input grid cells to be averaged. The default is None.
+        lag : integer, optional
+            If specified, a dz/dt operator is created, lagged by this number of time epochs. The default is None.
+        taper : boolean, optional
+            if True, weight edge points by 1/2 and  corner points by 1/4. The default is True.
+        valid_equations_only : boolean, optional
+            If true, only equations that fall within the tapered area will be included. The default is True.
+        dims : TYPE, optional
+            Dimensions over which to sum.  If now specified, all dimensions will be used. The default is None.
+
+        Returns
+        -------
+        LSsurf.lin_op
+            self
+        '''
         if taper:
             half_kernel=np.floor((kernel_size-1)/2).astype(int)
         else:
@@ -380,10 +404,11 @@ class lin_op:
             wt = np.concatenate([-wt0, wt0])/(lag*self.grid.delta[2])
             grid_shift[2] = 0.5*lag*self.grid.delta[2]
 
+        # fill in the coefficients for the current operator
         self.diff_op( delta_subs, wt.astype(float), which_nodes = ind0,\
                      valid_equations_only=valid_equations_only )
         if taper:
-            self.update_dst_grid(grid_shift, kernel_size-1)
+            self.update_dst_grid(grid_shift, np.maximum(1, kernel_size-1))
         else:
             self.update_dst_grid(grid_shift, kernel_size)
 
@@ -435,7 +460,8 @@ class lin_op:
         else:
             ind0=self.dst_ind0
         P=np.zeros(grid.col_N+1)+np.NaN
-        P[ind0]=self.toCSR(row_N=ind0.size).dot(m).ravel()
+        # added col_N=m.size
+        P[ind0]=self.toCSR(row_N=ind0.size, col_N=m.size).dot(m).ravel()
         return P[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def grid_error(self, Rinv, grid=None):
@@ -450,7 +476,7 @@ class lin_op:
         else:
             ind0=self.dst_ind0
         E=np.zeros(self.col_N)+np.NaN
-        E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size).dot(Rinv)).power(2).sum(axis=1)).ravel()
+        E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size, col_N=Rinv.shape[0]).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
     def vstack(self, ops, order=None, name=None, TOC_cols=None):
@@ -541,7 +567,7 @@ class lin_op:
 
         if self.grid.mask is None:
             return np.ones_like(self.ind0, dtype=float)
-        # if the operator's grid has more dimensions than the mask does, 
+        # if the operator's grid has more dimensions than the mask does,
         # need to use the first two indices to pick the grid cells
         if len(self.grid.shape) > len(self.grid.mask.shape):
             temp=np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
@@ -551,7 +577,7 @@ class lin_op:
             subs=np.unravel_index(inds, self.grid.mask.shape)
         temp=self.grid.mask[subs]
         if mask_scale is not None:
-            temp2=np.zeros_like(temp, dtype=np.float)
+            temp2=np.zeros_like(temp, dtype=float)
             for key in mask_scale.keys():
                 temp2[temp==key]=mask_scale[key]
             return temp2
@@ -578,6 +604,47 @@ class lin_op:
             # but need to add a toarray() step to avoid broadcasting rules
             temp = csr[row, inds].toarray()
             csr[row,inds] = temp.ravel()*mask.ravel()[mask_ind]
+        temp=csr.tocoo()
+        self.r, self.c, self.v=[temp.row, temp.col, temp.data]
+        return self
+
+    def apply_mask(self, mask=None, row_N=None, time_step_overlap=1):
+        # multiply array elements by the values in a mask
+        # This function handles either 2d or 3d masks
+        # if no mask is specified, use self.grid.mask
+        if mask is None:
+            mask=self.grid.mask
+        csr=self.toCSR(row_N=row_N, col_N=self.col_N)
+
+        for row in range(csr.shape[0]):
+            # get the indices of the nonzero entries for the row
+            inds=csr[row,:].nonzero()[1]
+            # get the mask subscripts for the indices
+            subs=np.unravel_index(inds-self.grid.col_0, self.grid.shape)
+            # convert the subscripts into an index into the raveled mask
+            mask_ind=np.ravel_multi_index([*subs[0:mask.ndim]], mask.shape)
+            mask_sub = mask.ravel()[mask_ind]
+            if not np.any(mask_sub):
+                csr[row, inds]=0.
+                continue
+            if time_step_overlap > 1:
+                #Here, we ount the time steps overlapped for each 2-d grid cell
+                # First, find the 2D indices of each entry in the operator row
+                inds_2d = np.ravel_multi_index(subs[0:2],  mask.shape[0:2])
+                # build a matrix that maps the 3-D cells to the 2-D cells
+                twoD_to_3D = sp.coo_matrix((np.ones_like(inds), (inds_2d, inds-self.grid.col_0)),
+                                                 shape=(np.max(inds_2d)+1, mask.size))
+                # Multiplying this matrix by the mask counts the entries in the
+                # 3D mask included in each cell
+                enough_cells = twoD_to_3D.dot(mask.ravel()) >= time_step_overlap
+                # map the 2-D cells with enough 3D entries back to the 3-D index
+                overlap_mask = twoD_to_3D.T.dot(enough_cells.astype(float))
+            # want to do: csr[row,inds] *= mask.ravel()[mask_ind]
+            # but need to add a toarray() step to avoid broadcasting rules
+            temp = csr[row, inds].toarray()
+            if time_step_overlap > 1:
+                temp *= overlap_mask[inds-self.grid.col_0].ravel()
+            csr[row,inds] = temp.ravel()*mask_sub
         temp=csr.tocoo()
         self.r, self.c, self.v=[temp.row, temp.col, temp.data]
         return self

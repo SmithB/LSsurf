@@ -18,7 +18,8 @@ class fd_grid(object):
     # first global index can be shifted by specifying a nonzero col_0 value,
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
-    def __init__(self, bounds, deltas, col_0=0, col_N=None, srs_proj4=None, mask_file=None, mask_data=None, name=''):
+    def __init__(self, bounds, deltas, name='', col_0=0, col_N=None, srs_proj4=None, \
+                 mask_file=None, mask_data=None, mask_interp_threshold=0.5):
         self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
@@ -28,48 +29,18 @@ class fd_grid(object):
         self.stride=np.flipud(np.cumprod(np.flipud(np.r_[self.shape[1:], 1]))) # difference in global_ind between adjacent nodes
         self.col_0=col_0 # first global_ind for the grid
         self.srs_proj4=srs_proj4 # Well Known Text for the spatial reference system of the grid
-        if mask_data is None:
-            # ignore the mask file if mask_data is provided
-            self.mask_file=mask_file
-        else:
-            self.mask_file=None
-        self.mask=None  # binary mask 
         self.user_data=dict() # storage space
         self.name=name # name of the degree of freedom specified by the grid
+        self.mask_interp_threshold=mask_interp_threshold
         self.cell_area=None
         if col_N is None:
             self.col_N=self.col_0+self.N_nodes
         else:
             self.col_N=col_N
-        
-        if self.mask_file is not None:
-            # read the mask based on its extension
-            # geotif:
-            if self.mask_file.endswith('.tif'):
-                self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
-                self.mask=np.round(self.mask).astype(np.int)
-            # vector (add more formats as needed)
-            elif self.mask_file.endswith('.shp') or self.mask_file.endswith('.db'):
-                self.mask=self.burn_mask(self.mask_file)
-        elif mask_data is not None:
-            mask_delta = [mask_data.y[1]-mask_data.y[0] , mask_data.x[1]-mask_data.x[0]]
-            interp_field='z' # default
-            if self.delta[1] > mask_data.x[1]-mask_data.x[0] or self.delta[0] > mask_data.y[1]-mask_data.y[0]:
-                from scipy.ndimage import binary_erosion
-                Nx = int(np.ceil(self.delta[1]/mask_delta[0]/2))
-                Ny = int(np.ceil(self.delta[0]/mask_delta[0]/2))
-                
-                if Nx > 1 or Ny > 1:
-                    mask_data.assign({'z_coarse':mask_data.z.copy()})
-                    interp_field='z_coarse'
-                if Nx > 1:
-                    mask_data.z_coarse = binary_erosion(mask_data.z_coarse, np.ones([Nx,1]))
-                if Ny > 1:
-                    mask_data.z_coarse = binary_erosion(mask_data.z_coarse, np.ones([1, Ny]))
-                
-            self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True, field=interp_field) > 0.5
-        else:
-            self.mask=np.ones(self.shape[0:2], dtype=bool)
+        self.mask=np.ones(self.shape[0:2], dtype=bool)
+        self.mask_3d=None
+        self.setup_mask(mask_data=mask_data, mask_file=mask_file, 
+                        interp_threshold=self.mask_interp_threshold)
 
     def copy(self):
         return copy.deepcopy(self)
@@ -131,8 +102,8 @@ class fd_grid(object):
             return ind
 
     def read_geotif(self, filename, srs_proj4=None, dataType=gdal.GDT_Float32, interp_algorithm=gdal.GRA_NearestNeighbour):
+        # read data from a geotif
 
-        # or it can be stored in the grid
         if srs_proj4 is None:
             srs_proj4=self.srs_proj4
         # the gdal geotransform gives the top left corner of each pixel.
@@ -173,15 +144,90 @@ class fd_grid(object):
 
     def burn_mask(self, mask_file, srs_proj4=None):
 
+        # Burn a mask from a vector file into a mask with the grid's dimensions
         mask_ds = pc.grid.data().from_dict({'x':self.ctrs[1], 'y':self.ctrs[0], 'z':np.zeros(self.shape[0:2])})\
             .to_gdal(srs_proj4=self.srs_proj4)
 
-        vector_mask=ogr.Open(mask_file)
+        vector_mask=ogr.Open(mask_file,  0) # 0 is read-only
         mask_layer=vector_mask.GetLayer()
         gdal.RasterizeLayer(mask_ds, [1], mask_layer, burn_values=[1])
         vector_mask=None
         return np.flipud(mask_ds.GetRasterBand(1).ReadAsArray())
-        
-        
 
-        
+    def make_eroded_source_mask(self, mask_data, mask_is_3d):
+
+        mask_delta = [mask_data.y[1]-mask_data.y[0] , mask_data.x[1]-mask_data.x[0]]
+        # If this grid's spacing is more than twice that of the mask
+        # data, erode the mask by 1/2 pixel before proceeding
+        Nx = int(np.ceil(self.delta[1]/mask_delta[0]/2))
+        Ny = int(np.ceil(self.delta[0]/mask_delta[0]/2))
+        if Nx > 1 or Ny > 1:
+            from scipy.ndimage import binary_erosion
+            local_mask=mask_data.copy()
+            if Nx > 1:
+                if mask_is_3d:
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([Nx,1, 1]))
+                else:
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([Nx,1]))
+            if Ny > 1:
+                if mask_is_3d:
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([1,Ny, 1]))
+                else:
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([1, Ny]))
+        else:
+            local_mask=mask_data
+        return local_mask
+
+    def setup_mask(self, mask_data=None, mask_file=None, interp_threshold=0.5):
+        if mask_data is None:
+            # ignore the mask file if mask_data is provided
+            self.mask_file=mask_file
+        else:
+            self.mask_file=None
+
+        if self.mask_file is not None:
+            # read the mask based on its extension
+            # geotif:
+            if self.mask_file.endswith('.tif'):
+                self.mask=self.read_geotif(self.mask_file, interp_algorithm=gdal.GRA_Average)
+                self.mask=np.round(self.mask).astype(int)
+            # vector (add more formats as needed)
+            elif self.mask_file.endswith('.shp') or self.mask_file.endswith('.db'):
+                self.mask=self.burn_mask(self.mask_file)
+        elif mask_data is not None:
+            mask_is_3d = len(mask_data.shape) > 2
+            if isinstance(mask_data,  np.ndarray):
+                # if a mask array is provided, use it
+                self.mask=mask_data.astype(bool)
+                if mask_is_3d:
+                    self.mask_3d=mask_data.astype(bool)
+            mask_data=self.make_eroded_source_mask(mask_data, mask_is_3d)
+
+            if mask_is_3d:
+                self.mask_3d=pc.grid.data().from_dict({'x':self.ctrs[1],
+                                                       'y':self.ctrs[0],
+                                                       't':self.ctrs[2],
+                                                       'z':np.zeros(self.shape, dtype=bool)})
+                # three-dimensional mask, last dimension is time
+                for t_ind, this_t in enumerate(self.ctrs[2]):
+                    if this_t <= mask_data.t[0]:
+                        this_mask_data=pc.grid.data().from_dict(
+                            {'x': mask_data.x,'y':mask_data.y, 'z':mask_data.z[:,:,0]}
+                            )
+                    elif this_t >= mask_data.t[-1]:
+                        this_mask_data=pc.grid.data().from_dict(
+                            {'x': mask_data.x,'y':mask_data.y, 'z':mask_data.z[:,:,-1]}
+                            )
+                    else:
+                        # interpolate the mask in time to the current epoch
+                        i_t=np.argmin(mask_data.t<this_t)-1
+                        W=np.array(([mask_data.t[i_t+1]-this_t, this_t-mask_data.t[i_t]]))/(mask_data.t[i_t+1]-mask_data.t[i_t])
+                        this_mask_data=pc.grid.data().from_dict(
+                            {'x': mask_data.x,'y':mask_data.y, \
+                             'z':mask_data.z[:,:, i_t]*W[0]+mask_data.z[:,:, i_t+1]*W[1]}
+                            )
+                    self.mask_3d.z[:,:,t_ind]=this_mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > interp_threshold
+            else:
+                self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > 0.5
+
+

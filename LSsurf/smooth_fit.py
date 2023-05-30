@@ -307,7 +307,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
             m[ff].assign({'misfit_notide_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_notide_scaled**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
 
-def smooth_xytb_fit_aug(**kwargs):
+def smooth_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
     args={'reference_epoch':0,
     'W_ctr':1e4,
@@ -346,6 +346,8 @@ def smooth_xytb_fit_aug(**kwargs):
     'bias_edit_vals':None,
     'sensor_grid_bias_params':None,
     'ancillary_data':None,
+    'lagrangian_coords':None,
+    'lagrangian_res':None,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)
@@ -396,6 +398,9 @@ def smooth_xytb_fit_aug(**kwargs):
     # define the interpolation operator, equal to the sum of the dz and z0 operators
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
     G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))
+    if args['lagrangian_coords'] is not None:
+        G_data.add(lin_op(grids['lagrangian_z0']), name='interp_lagrangian_z0').interp_mtx(
+            [getattr(data, field) for field in args['lagrangian_coords']])
 
     # define the smoothness constraints
     constraint_op_list=[]

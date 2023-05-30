@@ -5,8 +5,9 @@ import pointCollection as pc
 
 def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
                     sensor=None,\
-                     spacing=None, expected_rms=None, \
-                     expected_val=0, expected_rms_grad2=None ):
+                    spacing=None, expected_rms=None, \
+                    expected_val=0, expected_rms_grad2=None, \
+                    expected_rms_grad=None, filename=None, dims=2):
     '''
     set up a matrix to fit a gridded bias that multiplies a data parameter
     
@@ -17,7 +18,10 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
         grids: dict: named grids representing model parameters
         expected_rms: float, default=None: Expected RMS value of the parameter. If not specified, the RMS of the parameter will be unconstrained
         expected_value: float, default=0: Expected value of the parameter.
-        expected_rms_grad: float, default=None: expected RMS gradient of the parameter.  If not specified, the gradient of the parameter will be unconstrained
+        expected_rms_grad2: float, default=None: expected RMS grad2 of the parameter.  If not specified, the grad2 of the parameter will be unconstrained
+        expected_rms_grad: float, default=None: expected RMS grad of the parameter.  If not specified, the grad2 of the parameter will be unconstrained
+        filename: str:  DEM filename, to be used in determining the expected direction of anomalies
+        dims: int, default=2:  If set to 1, a one-dimensional grid will be calculated, with axis running parallel to an along-track dimension calculated using a DEM filename.
     '''
     sensor_rows=np.flatnonzero(data.sensor==sensor)
     Dsub=data[sensor_rows]

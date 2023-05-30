@@ -131,11 +131,35 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def interp_mtx(self, pts):
-        # create a matrix that, when it multiplies a set of nodal values,
-        # gives the bilinear interpolation between those nodes at a set of
-        # data points
-        pts=[pp.ravel() for pp in pts]
+    def interp_mtx(self, pts, xform=None):
+        """
+        Create a matrix that interpolates a grid to a set of points.
+
+        Parameters
+        ----------
+        pts : list of numpy arrays
+            Coordinates to which the operator will interpolate.
+        xform : dict, optional
+            Dictionary that specifies "origin": origin of the transform, and
+            "basis_vectors": a matrix whose columns defining the axes of the
+            transform.
+            The default is None.
+
+        Returns
+        -------
+        self
+            lin_op specifying the interpolation.
+        """
+        if xform is None:
+            if self.grid.xform is not None:
+                xform=self.grid.xform
+
+        if xform is None:
+            pts=[pp.ravel() for pp in pts]
+        else:
+            temp = (np.c_[[pp.ravel() for pp in pts[0:len(xform['origin'])]]].T \
+                    - xform['origin']) @ xform['basis_vectors']
+            pts =[ temp[:, dim].ravel() for dim in range(self.grid.N_dims) ]
         # Identify the nodes surrounding each data point
         # The floating-point subscript expresses the point locations in terms
         # of their grid positions
@@ -147,7 +171,7 @@ class lin_op:
         global_ind=self.grid.global_ind(cell_sub)
         # make a list of dimensions based on the dimensions of the grid
         if self.grid.N_dims==1:
-            list_of_dims=np.mgrid[0:2]
+            list_of_dims=np.mgrid[0:2, 0:1]
         elif self.grid.N_dims==2:
             list_of_dims=np.mgrid[0:2, 0:2]
         elif self.grid.N_dims==3:
@@ -510,12 +534,15 @@ class lin_op:
         rr=list()
         cc=list()
         vv=list()
+        ee=list()
         last_row=0
         for ind in order:
             # append the nonzero entries to the list of entries
             rr.append(ops[ind].r.ravel()+last_row)
             cc.append(ops[ind].c.ravel())
             vv.append(ops[ind].v.ravel())
+            if ops[ind].expected is not None:
+                ee.append(ops[ind].expected.ravel())
             # label these equations in the TOC
             this_name=ops[ind].name
             if this_name is None:
@@ -545,6 +572,8 @@ class lin_op:
         self.r=np.concatenate(rr)
         self.c=np.concatenate(cc)
         self.v=np.concatenate(vv)
+        if len(ee) > 0:
+            self.expected=np.concatenate(ee)
 
         self.ind0=np.concatenate([op.ind0 for op in ops])
         if self.name is not None and len(self.name) >0:

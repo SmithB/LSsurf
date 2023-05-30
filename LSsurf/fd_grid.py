@@ -19,7 +19,7 @@ class fd_grid(object):
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
     def __init__(self, bounds, deltas, name='', col_0=0, col_N=None, srs_proj4=None, \
-                 mask_file=None, mask_data=None, mask_interp_threshold=0.5):
+                 mask_file=None, mask_data=None, mask_interp_threshold=0.5, xform=None):
         self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
@@ -37,9 +37,10 @@ class fd_grid(object):
             self.col_N=self.col_0+self.N_nodes
         else:
             self.col_N=col_N
+        self.xform = xform
         self.mask=np.ones(self.shape[0:2], dtype=bool)
         self.mask_3d=None
-        self.setup_mask(mask_data=mask_data, mask_file=mask_file, 
+        self.setup_mask(mask_data=mask_data, mask_file=mask_file,
                         interp_threshold=self.mask_interp_threshold)
 
     def copy(self):
@@ -88,6 +89,7 @@ class fd_grid(object):
     def global_ind(self, cell_sub, return_valid=False):
         # find the global index for a cell from its subscript
         cell_sub=[temp.astype(int) for temp in cell_sub]
+
         dims=range(len(self.shape))
         if return_valid:
             # check if subscripts are in bounds before calculating indices
@@ -229,5 +231,3 @@ class fd_grid(object):
                     self.mask_3d.z[:,:,t_ind]=this_mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > interp_threshold
             else:
                 self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > 0.5
-
-

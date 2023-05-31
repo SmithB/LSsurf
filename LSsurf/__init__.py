@@ -23,3 +23,4 @@ from LSsurf.calc_sigma_extra import calc_sigma_extra,\
     calc_sigma_extra_on_grid
 from LSsurf.unique_by_rows import unique_by_rows
 from LSsurf.match_priors import match_tile_edges, match_prior_dz
+from LSsurf.hermite_poly_fit import *

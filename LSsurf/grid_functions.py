@@ -70,16 +70,6 @@ def setup_grids(args):
     if isinstance(args['mask_data'], dict):
         dz_mask_data=dz_mask_data['dz']
         mask_interp_threshold=0.5
-        # if we have specified a dictionary for mask_data, use the 'dz' component
-        #if args['spacing']['dz']==np.diff(args['mask_data']['dz'].x[0:2]):
-        #    # if the stored grid spacing is the same as that requested here,just
-        #    # copy it
-        #    print("\n---copying dz mask---")
-        #    dz_mask_data=dz_mask_data['dz']
-        #else:
-        #    # otherwise, interpolate values from the grid object
-        #    dz_mask_data=args['mask_data']['dz']
-        #    mask_interp_threshold=0.5 # make a faithful copy of the input grid
 
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
                         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
@@ -91,6 +81,13 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
 
+    if 'lagrangian_coords' in args and args['lagrangian_coords'] is not None:
+        grids['lagrangian_dz']=fd_grid( [bds['y'], bds['x']], \
+                            [args['spacing']['lagrangian_dz'], args['spacing']['lagrangian_dz']],
+                            name='lagrangian_dz', col_0=grids['z0'].N_nodes+grids['dz'].N_nodes,
+                            srs_proj4=args['srs_proj4'])
+        for grid in [grids['z0'], grids['dz']]:
+            grid.col_N = grids['z0'].N_nodes + grids['dz'].N_nodes + grids['lagrangian_dz'].N_nodes
 
     if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
         if dz_mask_data is not None and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:

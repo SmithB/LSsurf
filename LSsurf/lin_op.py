@@ -131,11 +131,45 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def interp_mtx(self, pts):
-        # create a matrix that, when it multiplies a set of nodal values,
-        # gives the bilinear interpolation between those nodes at a set of
-        # data points
-        pts=[pp.ravel() for pp in pts]
+    def interp_mtx(self, pts, xform=None, bounds_error=True):
+        """
+        Create a matrix that interpolates a grid to a set of points.
+
+        Parameters
+        ----------
+        pts : list of numpy arrays
+            Coordinates to which the operator will interpolate.
+        xform : dict, optional
+            Dictionary that specifies "origin": origin of the transform, and
+            "basis_vectors": a matrix whose columns defining the axes of the
+            transform.
+            The default is None.
+        bounds_error: boolean, optional
+            If True, an error will occur if interpolation values are requested
+            for points outside the grid.  If False, the interpolation will
+            return zero for points outside the grid.  The default is True
+
+        Returns
+        -------
+        self
+            lin_op specifying the interpolation.
+        """
+        if xform is None:
+            if self.grid.xform is not None:
+                xform=self.grid.xform
+
+        if xform is None:
+            pts=[pp.ravel() for pp in pts]
+        else:
+            temp = (np.c_[[pp.ravel() for pp in pts[0:len(xform['origin'])]]].T \
+                    - xform['origin']) @ xform['basis_vectors']
+            pts =[ temp[:, dim].ravel() for dim in range(self.grid.N_dims) ]
+        # get indices of valid points
+        row=np.flatnonzero(self.grid.validate_pts(pts))
+        if bounds_error and len(row) < len(pts[0]):
+            raise(ValueError(f'Found {len(pts[0])-len(row)} points out of bounds for grid {self.grid.name}'))
+        # subsample valid points
+        pts =[temp[row] for temp in pts]
         # Identify the nodes surrounding each data point
         # The floating-point subscript expresses the point locations in terms
         # of their grid positions
@@ -147,20 +181,20 @@ class lin_op:
         global_ind=self.grid.global_ind(cell_sub)
         # make a list of dimensions based on the dimensions of the grid
         if self.grid.N_dims==1:
-            list_of_dims=np.mgrid[0:2]
+            list_of_dims=np.mgrid[0:2, 0:1]
         elif self.grid.N_dims==2:
             list_of_dims=np.mgrid[0:2, 0:2]
         elif self.grid.N_dims==3:
             list_of_dims=np.mgrid[0:2, 0:2, 0:2]
         delta_ind=np.c_[[kk.ravel() for kk in list_of_dims]]
         n_neighbors=delta_ind.shape[1]
-        Npts=len(pts[0])
+        Npts=len(row)
         rr=np.zeros([Npts, n_neighbors], dtype=int)
         cc=np.zeros([Npts, n_neighbors], dtype=int)
         vv= np.ones([Npts, n_neighbors], dtype=float)
         # make lists of row and column indices and weights for the nodes
         for ii in range(n_neighbors):
-            rr[:,ii]=np.arange(len(pts[0]), dtype=int)
+            rr[:,ii]=row.copy()
             cc[:,ii]=global_ind+np.sum(self.grid.stride*delta_ind[:,ii])
             for dd in range(self.grid.N_dims):
                 if delta_ind[dd, ii]==0:
@@ -177,6 +211,12 @@ class lin_op:
         self.TOC['rows']={self.name:np.arange(self.N_eq, dtype='int')}
         self.TOC['cols']={self.grid.name:np.arange(self.grid.col_0, self.grid.col_0+self.grid.N_nodes)}
         self.__update_size_and_shape__()
+        return self
+
+    def one(self, DOF='z'):
+        self.diff_op([[0], [0]], np.array([1.]))
+        self.__update_size_and_shape__()
+        self.name=DOF
         return self
 
     def grad(self, DOF='z'):
@@ -428,7 +468,7 @@ class lin_op:
 
         return self
 
-    def data_bias(self, ind, val=None, col=None):
+    def data_bias(self, ind=None, val=None, col=None, DOF=None):
         # make a linear operator that returns a particular model parameter.
         # can be used to add one model parameter to a set of other parameters,
         # when added to another matrix, or to force a model parameter towards
@@ -510,12 +550,15 @@ class lin_op:
         rr=list()
         cc=list()
         vv=list()
+        ee=list()
         last_row=0
         for ind in order:
             # append the nonzero entries to the list of entries
             rr.append(ops[ind].r.ravel()+last_row)
             cc.append(ops[ind].c.ravel())
             vv.append(ops[ind].v.ravel())
+            if ops[ind].expected is not None:
+                ee.append(ops[ind].expected.ravel())
             # label these equations in the TOC
             this_name=ops[ind].name
             if this_name is None:
@@ -545,6 +588,8 @@ class lin_op:
         self.r=np.concatenate(rr)
         self.c=np.concatenate(cc)
         self.v=np.concatenate(vv)
+        if len(ee) > 0:
+            self.expected=np.concatenate(ee)
 
         self.ind0=np.concatenate([op.ind0 for op in ops])
         if self.name is not None and len(self.name) >0:

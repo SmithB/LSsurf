@@ -255,6 +255,13 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape),\
                                      'cell_area':grids['dz'].cell_area, \
                                      'mask':grids['dz'].mask})
+    if 'lagrangian_dz' in grids:
+        m['lagrangian_dz']=pc.grid.data().from_dict({'x':grids['lagrangian_dz'].ctrs[1],\
+                                         'y':grids['lagrangian_dz'].ctrs[0],\
+                                         'dz': np.reshape(m0[G_data.TOC['cols']['lagrangian_dz']], grids['lagrangian_dz'].shape),\
+                                         'cell_area':grids['lagrangian_dz'].cell_area, \
+                                         'mask':grids['lagrangian_dz'].mask})
+
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
 
@@ -347,7 +354,6 @@ def smooth_fit(**kwargs):
     'sensor_grid_bias_params':None,
     'ancillary_data':None,
     'lagrangian_coords':None,
-    'lagrangian_res':None,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)
@@ -399,8 +405,8 @@ def smooth_fit(**kwargs):
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
     G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))
     if args['lagrangian_coords'] is not None:
-        G_data.add(lin_op(grids['lagrangian_z0']), name='interp_lagrangian_z0').interp_mtx(
-            [getattr(data, field) for field in args['lagrangian_coords']])
+        G_data.add(lin_op(grids['lagrangian_dz'], name='interp_lagrangian_dz').interp_mtx(
+            [getattr(data, field) for field in args['lagrangian_coords']], bounds_error=False))
 
     # define the smoothness constraints
     constraint_op_list=[]
@@ -597,7 +603,7 @@ def main():
     SRS_proj4='+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs '
     spacing={'z0':50, 'dz':50, 'dt':0.25}
 
-    S=smooth_xytb_fit_aug(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS,
+    S=smooth_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS,
                      reference_epoch=2, N_subset=None, compute_E=False,
                      max_iterations=2,
                      srs_proj4=SRS_proj4, VERBOSE=True, dzdt_lags=[1])

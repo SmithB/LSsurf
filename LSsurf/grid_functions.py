@@ -81,10 +81,10 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
 
-    if args['lagrangian_spacing'] is not None:
-        grids['lagrangian_z0']==fd_grid( [bds['y'], bds['x']], \
-                            [args['lagrangian_spacing'], args['lagrangian_spacing']],
-                            name='lagrangian_z0', col_0=grids['z0'].N_nodes+grids['dz'].N_nodes,
+    if 'lagrangian_coords' in args and args['lagrangian_coords'] is not None:
+        grids['lagrangian_dz']=fd_grid( [bds['y'], bds['x']], \
+                            [args['spacing']['lagrangian_dz'], args['spacing']['lagrangian_dz']],
+                            name='lagrangian_dz', col_0=grids['z0'].N_nodes+grids['dz'].N_nodes,
                             srs_proj4=args['srs_proj4'])
         for grid in [grids['z0'], grids['dz']]:
             grid.col_N = grids['z0'].N_nodes + grids['dz'].N_nodes + grids['lagrangian_dz'].N_nodes

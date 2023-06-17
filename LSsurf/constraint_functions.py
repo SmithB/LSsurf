@@ -8,7 +8,7 @@ Created on Thu May 26 13:34:24 2022
 
 ''' Functions to setup constraints for smooth surface fits
     Provides: setup_smoothness_constraints, build_reference_epoch_matrix
-        
+
 '''
 
 import numpy as np
@@ -37,7 +37,7 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
     root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
     grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
     grad2_z0.expected=E_RMS['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(mask_scale)
-    
+
     constraint_op_list += [grad2_z0]
     if 'dz0_dx' in E_RMS:
         grad_z0=lin_op(grids['z0'], name='grad_z0').grad(DOF='z0')
@@ -50,14 +50,29 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
         grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z', t_lag=1)
         grad2_dz.expected=E_RMS['d3z_dx2dt']/root_delta_V_dz*grad2_dz.mask_for_ind0(mask_scale)
         constraint_op_list += [grad2_dz]
+
     if 'd2z_dxdt' in E_RMS and E_RMS['d2z_dxdt'] is not None:
         grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z', t_lag=1)
         grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(mask_scale)
         constraint_op_list += [ grad_dzdt ]
+
     if 'd2z_dt2' in E_RMS and E_RMS['d2z_dt2'] is not None:
         d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
         d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + E_RMS['d2z_dt2']/root_delta_V_dz
         constraint_op_list += [d2z_dt2]
+
+    if 'lagrangian_dz' in E_RMS and E_RMS['lagrangian_dz'] is not None:
+        root_A_lag=np.sqrt(grids['lagrangian_dz'].delta[0]*grids['lagrangian_dz'].delta[1])
+        lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms').one(DOF='lagrangian_dz')
+        lag_dz.expected = np.zeros(lag_dz.N_eq) + E_RMS['lagrangian_dz']/root_A_lag
+        constraint_op_list += [lag_dz]
+
+    if 'lagrangian_dzdx' in E_RMS and E_RMS['lagrangian_dzdx'] is not None:
+        root_A_lag=np.sqrt(grids['lagrangian_dz'].delta[0]*grids['lagrangian_dz'].delta[1])
+        grad_lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms').grad(DOF='lagrangian_dz')
+        grad_lag_dz.expected = np.zeros(grad_lag_dz.N_eq) + E_RMS['lagrangian_dzdx']/root_A_lag
+        constraint_op_list += [grad_lag_dz]
+
     for constraint in constraint_op_list:
         if np.any(constraint.expected==0):
             raise(ValueError(f'found zero value in the expected values for {constraint.name}'))

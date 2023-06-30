@@ -360,7 +360,11 @@ def smooth_fit(**kwargs):
     for field in required_fields:
         if field not in kwargs:
             raise ValueError("%s must be defined", field)
-    valid_data = np.isfinite(args['data'].z) #np.ones_like(args['data'].x, dtype=bool)
+    valid_data = np.isfinite(args['data'].z)
+
+    if 'sensor' not in args['data'].fields:
+        args['data'].assign(sensor=np.zeros(args['data'].shape))
+
     timing=dict()
 
     m={}
@@ -410,6 +414,7 @@ def smooth_fit(**kwargs):
 
     # define the smoothness constraints
     constraint_op_list=[]
+    print(f"smooth_fit: E_RMS={args['E_RMS']}")
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'], args['mask_scale'])
 
     ### NB: NEED TO MAKE THIS WORK WITH SETUP_GRID_BIAS
@@ -438,15 +443,19 @@ def smooth_fit(**kwargs):
         bias_model={}
 
     # check that the data_slope sensors are in the data that has passed the filtering steps
-    args['data_slope_sensors']=args['data_slope_sensors'][np.in1d(args['data_slope_sensors'], data.sensor)]
+
+
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors'])>0:
-        bias_model['E_slope_bias']=args['E_slope_bias']
-        G_slope_bias, Gc_slope_bias, bias_model = \
-            data_slope_bias(data, bias_model, sensors=args['data_slope_sensors'],\
+        args['data_slope_sensors']=args['data_slope_sensors'][np.in1d(args['data_slope_sensors'], data.sensor)]
+
+        if len(args['data_slope_sensors']) > 0:
+            bias_model['E_slope_bias']=args['E_slope_bias']
+            G_slope_bias, Gc_slope_bias, bias_model = \
+                data_slope_bias(data, bias_model, sensors=args['data_slope_sensors'],\
                             col_0=G_data.col_N, E_rms_bias=args['E_slope_bias'])
-        if G_slope_bias is not None:
-            G_data.add(G_slope_bias)
-            constraint_op_list.append(Gc_slope_bias)
+            if G_slope_bias is not None:
+                G_data.add(G_slope_bias)
+                constraint_op_list.append(Gc_slope_bias)
 
     if args['sensor_grid_bias_params'] is not None:
         for params in args['sensor_grid_bias_params']:

@@ -321,9 +321,13 @@ def validate_by_dz_mask(data, grids, valid_data):
         data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()).toCSR().\
             dot(grids['dz'].mask_3d.z.ravel().astype(float))
     else:
-        data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().\
-            dot(grids['dz'].mask.z.ravel().astype(float))
-
+        if grids['dz'].mask.ndim==2:
+            temp_grid=fd_grid(grids['dz'].bds[0:2], grids['dz'].delta[0:2])
+            data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().\
+                dot(grids['dz'].mask.ravel().astype(float))
+        else:
+            data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()).toCSR().\
+                dot(grids['dz'].mask.ravel().astype(float))
     data_mask[~np.isfinite(data_mask)]=0
     data_mask = data_mask > 0.5
     if np.any(data_mask==0):

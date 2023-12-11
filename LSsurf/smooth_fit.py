@@ -495,7 +495,6 @@ def smooth_fit(**kwargs):
     if np.any(Ec==0):
         raise(ValueError('zero value found in constraint sigma'))
 
-    args['DEBUG'] = True
     if args['DEBUG']:
         print_TOC(G_data, Gc)
 

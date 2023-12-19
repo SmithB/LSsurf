@@ -3,5 +3,5 @@ scipy
 h5py
 gdal
 matplotlib
-sparseqr @ https://github.com/SmithB/PySPQR/tarball/master
-pointCollection @ https://github.com/SmithB/pointCollection/tarball/master
+sparseqr @ git+https://github.com/yig/PySPQR.git
+pointCollection @ git+https://github.com/SmithB/pointCollection.git

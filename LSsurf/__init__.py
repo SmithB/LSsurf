@@ -25,3 +25,4 @@ from LSsurf.unique_by_rows import unique_by_rows
 from LSsurf.match_priors import match_tile_edges, match_prior_dz
 from LSsurf.hermite_poly_fit import *
 from LSsurf.get_pgc import *
+from LSsurf.setup_DEM_jitter_fit import *

@@ -77,7 +77,7 @@ def setup_grids(args):
                         mask_file=mask_file, mask_data=dz_mask_data,\
                         mask_interp_threshold = mask_interp_threshold)
 
-    grids['z0'].col_N=grids['dz'].col_N
+    #grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
 
@@ -86,11 +86,11 @@ def setup_grids(args):
                             [args['spacing']['lagrangian_dz'], args['spacing']['lagrangian_dz']],
                             name='lagrangian_dz', col_0=grids['z0'].N_nodes+grids['dz'].N_nodes,
                             srs_proj4=args['srs_proj4'])
-        for grid in [grids['z0'], grids['dz']]:
-            grid.col_N = grids['z0'].N_nodes + grids['dz'].N_nodes + grids['lagrangian_dz'].N_nodes
+        #for grid in [grids['z0'], grids['dz']]:
+        #    grid.col_N = grids['z0'].N_nodes + grids['dz'].N_nodes + grids['lagrangian_dz'].N_nodes
 
-    if np.any(grids['dz'].delta[0:2]>grids['z0'].delta):
-        if dz_mask_data is not None and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:
+    if np.any(grids['dz'].delta[0:2]>=grids['z0'].delta):
+        if dz_mask_data is not None and hasattr(dz_mask_data,'t') and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:
             # we have a time-dependent grid
             grids['dz'].cell_area = np.zeros(grids['dz'].shape)
             for t_ind, this_t in enumerate(grids['dz'].ctrs[2]):
@@ -116,6 +116,8 @@ def setup_grids(args):
             grids['dz'].cell_area=sum_cell_area(grids['z0'], grids['dz'])
     else:
         grids['dz'].cell_area=calc_cell_area(grids['dz'])
+        if grids['dz'].mask is not None:
+            grids['dz'].cell_area *= grids['dz'].mask
     # last-- multiply the z0 cell area by the z0 mask
     if grids['z0'].mask is not None:
         grids['z0'].cell_area *= grids['z0'].mask
@@ -131,6 +133,17 @@ def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None,
     else:
         grid_3d=False
         dims=list(range(0,2))
+    # if we are not returning an operator, and if the fine grid is the same as the coarse grid, just
+    # return a copy of the fine cell area
+    if not return_op:
+        # the assertion will fail if the grids are not the same
+        try:
+            assert(np.all(grid_f.ctrs[0]==grid_c.ctrs[0]) and np.all(grid_f.ctrs[1]==grid_c.ctrs[1]))
+            return cell_area_f.copy()
+        except (ValueError, AssertionError):
+            pass
+        
+    # otherwise, need to add up the cell areas within the fine grid
     n_k=(grid_c.delta[0:2]/grid_f.delta[0:2]+1).astype(int)
     if grid_3d:
         n_k =np.array(list(n_k)+[1])

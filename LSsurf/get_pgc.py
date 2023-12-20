@@ -17,9 +17,12 @@ import json
 
 def get_pgc_url(filename, pgc_url_file):
     """Get the bas url for a file at PGC."""
-    pgc_re=re.compile('(SETSM_.*_)\d+m(_lsf_seg\d+)')
+    # old:
+    #pgc_re=re.compile('(SETSM_.*_)\d+m(_lsf_seg\d+)')
+    #new:
+    pgc_re=re.compile('(SETSM_.*_)\d+m(.*_seg\d+)')
     pgc_base='2m'.join(list(pgc_re.search(filename).groups()))
-    print(pgc_base)
+    #print(pgc_base)
 
     pgc_url=None
     with open(pgc_url_file,'r') as fh:

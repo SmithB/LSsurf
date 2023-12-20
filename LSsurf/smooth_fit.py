@@ -11,6 +11,7 @@ import scipy.sparse as sp
 from LSsurf.data_slope_bias import data_slope_bias
 from LSsurf.setup_sensor_grid_bias import setup_sensor_grid_bias,\
                                             parse_sensor_bias_grids
+from LSsurf.setup_DEM_jitter_fit import setup_DEM_jitter_fit, parse_jitter_bias_grids
 import sparseqr
 from time import time, ctime
 from LSsurf.RDE import RDE
@@ -133,7 +134,6 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         # solve the equations
         tic=time();
         m0_last=m0
-        #print("smooth_xytb_fit_aug:iterate_fit: SETTING TOLERANCE TO -2")
         m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(), Ip_r.dot(TCinv.dot(rhs))))#, tolerance=-2))
         timing['sparseqr_solve']=time()-tic
 
@@ -285,6 +285,8 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
 
     m['sensor_bias_grids']=parse_sensor_bias_grids(m0, G_data, grids)
 
+    m['jitter_bias_grids']=parse_jitter_bias_grids(m0, G_data, grids)
+
     # parse the resduals to assess the contributions of the total error:
     # Make the C matrix for the constraints
     TCinv_cov=sp.dia_matrix((1./Ec, 0), shape=(Gc.N_eq, Gc.N_eq))
@@ -383,7 +385,7 @@ def smooth_fit(**kwargs):
 
     if not np.any(valid_data):
         if args['VERBOSE']:
-            print("smooth_xytb_fit_aug: no valid data")
+            print("smooth_fit: no valid data")
         return {'m':m, 'E':E, 'data':None, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # subset the data based on the valid mask
@@ -458,8 +460,24 @@ def smooth_fit(**kwargs):
                 constraint_op_list.append(Gc_slope_bias)
 
     if args['sensor_grid_bias_params'] is not None:
+        # split grid bias params into jitter and non-jitter
         for params in args['sensor_grid_bias_params']:
-            setup_sensor_grid_bias(data, grids, G_data, \
+            jitter_params={param.replace('jitter_',''):val for param, val in params.items() if 'jitter' in param}
+            non_jitter_params={param:val for param, val in params.items() if 'jitter' not in param}
+            if len(jitter_params):
+                try:
+                    jitter_params['filename']=params['filename']
+                    jitter_params['sensor']=params['sensor']
+                    Gd_jitter, jitter_constraint_list, xform, jitter_grid, xy_atc, poly =\
+                        setup_DEM_jitter_fit(data, col_0=G_data.col_N, **jitter_params)
+                    G_data.add(Gd_jitter)
+                    constraint_op_list += jitter_constraint_list
+                    grids[jitter_grid.name] = jitter_grid
+                except ValueError:
+                    print(f"jitter fit failed for {params['filename']}")
+                    pass
+            if len(non_jitter_params) and 'spacing' in non_jitter_params:
+                setup_sensor_grid_bias(data, grids, G_data, \
                                    constraint_op_list, **params)
 
         # setup priors
@@ -485,7 +503,7 @@ def smooth_fit(**kwargs):
         try:
             Ec[Gc.TOC['rows'][op.name]]=op.expected
         except ValueError as E:
-            print("smooth_xytb_fit_aug:\n\t\tproblem with "+op.name)
+            print("smooth_fit:\n\t\tproblem with "+op.name)
             raise(E)
     #if args['data_slope_sensors'] is not None and len(args['data_slope_sensors']) > 0:
     #    Ec[Gc.TOC['rows'][Gc_slope_bias.name]] = Cvals_slope_bias
@@ -547,7 +565,8 @@ def smooth_fit(**kwargs):
             args['mask_update_function'](grids, m, args)
 
         # setup operators that take averages of the grid at different scales
-        averaging_ops=setup_averaging_ops(grids['dz'], grids['z0'].col_N, args, grids['dz'].cell_area)
+        # changed grids['z0'].col_N to grids['dz'].col_N
+        averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
 
         # setup masked averaging ops
         averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))

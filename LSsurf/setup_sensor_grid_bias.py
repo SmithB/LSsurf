@@ -7,10 +7,11 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
                     sensor=None,\
                     spacing=None, expected_rms=None, \
                     expected_val=0, expected_rms_grad2=None, \
-                    expected_rms_grad=None, filename=None, dims=2):
+                    expected_rms_grad=None, filename=None, dims=2,
+                    **params):
     '''
     set up a matrix to fit a gridded bias that multiplies a data parameter
-    
+
     Parameters:
         data: pointCollection.data object containing the data
         G_data: fd_grid.operator that maps model parameters to the data
@@ -39,7 +40,6 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
     interp_mtx=lin_op(grid=grid, name=name).\
             interp_mtx(Dsub.coords()[0:2])
     interp_mtx.r=sensor_rows[interp_mtx.r.ravel()].reshape(interp_mtx.r.shape)
-    G_data.add(interp_mtx)
     #Build a constraint matrix for the curvature of the bias
     if expected_rms_grad2 is not None:
         grad2_b=lin_op(grid, name='grad2_'+name).grad2(DOF=name)
@@ -53,6 +53,7 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
         mag_b.expected=expected_rms+np.zeros(mag_b.N_eq)
         mag_b.prior=expected_val+np.zeros(mag_b.N_eq)
         constraint_op_list.append(mag_b)
+    G_data.add(interp_mtx)
 
 
 def parse_sensor_bias_grids(m0, G_data, grids):

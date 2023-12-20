@@ -216,7 +216,6 @@ class lin_op:
     def one(self, DOF='z'):
         self.diff_op([[0], [0]], np.array([1.]))
         self.__update_size_and_shape__()
-        self.name=DOF
         return self
 
     def grad(self, DOF='z'):

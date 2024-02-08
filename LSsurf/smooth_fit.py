@@ -347,6 +347,7 @@ def smooth_fit(**kwargs):
     'E_slope_bias':0.01,
     'E_RMS_d2x_PS_bias':None,
     'E_RMS_PS_bias':None,
+    'constraint_scaling_masks':None,
     'error_res_scale':None,
     'avg_masks':None,
     'sigma_extra_masks':None,
@@ -414,10 +415,24 @@ def smooth_fit(**kwargs):
         G_data.add(lin_op(grids['lagrangian_dz'], name='interp_lagrangian_dz').interp_mtx(
             [getattr(data, field) for field in args['lagrangian_coords']], bounds_error=False))
 
+    if args['constraint_scaling_maps'] is None:
+        constraint_scaling_masks=None
+    else:
+        constraint_scaling_masks={}
+        for key, this_map in args['constraint_scaling_maps'].items():
+            if 'z0' in key:
+                constraint_scaling_masks[key] =\
+                    this_map.interp(grids['z0'].ctrs[1], grids['z0'].ctrs[0], gridded=True)
+            else:
+                constraint_scaling_masks[key] =\
+                    this_map.interp(grids['dz'].ctrs[1], grids['dz'].ctrs[0], gridded=True)
+
     # define the smoothness constraints
     constraint_op_list=[]
     print(f"smooth_fit: E_RMS={args['E_RMS']}")
-    setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'], args['mask_scale'])
+    setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'],
+                                 args['mask_scale'],
+                                 scaling_masks = constraint_scaling_masks)
 
     ### NB: NEED TO MAKE THIS WORK WITH SETUP_GRID_BIAS
     #if args['E_RMS_d2x_PS_bias'] is not None:

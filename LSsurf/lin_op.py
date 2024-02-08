@@ -596,30 +596,34 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def mask_for_ind0(self, mask_scale=None):
+    def mask_for_ind0(self,  mask_scale=None, mask=None):
         """
         Sample the mask at the central indices for a linear operator
 
-        This function samples the linear operator's mask field at the indices
-        corresponding to the 'ind0' for each row of the operator.  The only
-        input is:
-             mask_scale (dict, or none):   gives the mapping between key values
+        This function samples a mask field at the indices
+        corresponding to the 'ind0' for each row of the operator.
+        Inputs:
+            mask: set of values that will be sampled.  If None, the mask field in
+                 the operator's grid will be sampled.
+            mask_scale (dict, or None):   gives the mapping between key values
                   and output values:  if mask_scale={1:0, 2:1}, then all mask
                   values equal to 1 will be returned as zero, and all mask values
                   equal to 2 will be returned as 1.
         """
+        if mask is None:
+            mask=self.grid.mask
 
-        if self.grid.mask is None:
+        if mask is None:
             return np.ones_like(self.ind0, dtype=float)
         # if the operator's grid has more dimensions than the mask does,
         # need to use the first two indices to pick the grid cells
-        if len(self.grid.shape) > len(self.grid.mask.shape):
+        if len(self.grid.shape) > len(mask.shape):
             temp=np.unravel_index(self.ind0-self.grid.col_0, self.grid.shape)
-            subs=tuple([temp[ii] for ii in range(len(self.grid.mask.shape))])
+            subs=tuple([temp[ii] for ii in range(len(mask.shape))])
         else:
             inds=self.ind0-self.grid.col_0
-            subs=np.unravel_index(inds, self.grid.mask.shape)
-        temp=self.grid.mask[subs]
+            subs=np.unravel_index(inds, mask.shape)
+        temp=mask[subs]
         if mask_scale is not None:
             temp2=np.zeros_like(temp, dtype=float)
             for key in mask_scale.keys():

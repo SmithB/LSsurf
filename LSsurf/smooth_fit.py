@@ -166,6 +166,11 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         if args['DEM_tol'] is not None:
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
 
+        if not np.any(in_TSE):
+            if args['VERBOSE']:
+                print("Edited data empty, returning")
+            return m0, sigma_extra, in_TSE, rs_data
+
         # quit if the solution is too similar to the previous solution
         if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > args['min_iterations']):
             if args['VERBOSE']:
@@ -406,6 +411,7 @@ def smooth_fit(**kwargs):
 
     # Check if we have any data.  If not, quit
     if data.size==0:
+        print("smooth_fit.py: after subsetting data, none remain, returning")
         return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # define the interpolation operator, equal to the sum of the dz and z0 operators

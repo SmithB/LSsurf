@@ -580,7 +580,6 @@ def smooth_fit(**kwargs):
             args['mask_update_function'](grids, m, args)
 
         # setup operators that take averages of the grid at different scales
-        # changed grids['z0'].col_N to grids['dz'].col_N
         averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
 
         # setup masked averaging ops
@@ -592,7 +591,7 @@ def smooth_fit(**kwargs):
         RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
     else:
         # still need to make the averaging ops
-        averaging_ops=setup_averaging_ops(grids['dz'], grids['z0'].col_N, args, grids['dz'].cell_area)
+        averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
         # setup masked averaging ops
         averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 

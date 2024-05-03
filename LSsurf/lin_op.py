@@ -42,6 +42,35 @@ class lin_op:
     def __update_size_and_shape__(self):
         self.shape = (self.N_eq, self.col_N)
 
+    def apply_xform(self, pts, xform=None, dims=[0,1]):
+        '''
+        Apply the operator's transform to a set of points
+
+        Parameters
+        ----------
+        pts : iterable
+            points to transform, ndim of numpy arrays
+        xform : dict, optional
+            dict with an origin an a basis_vectors field. If not specified, the
+            operator's transform will be used.  The default is None.
+        dims : iterable, optional
+            Dimensions from the transformed coordinates to be returned.
+            The default is [0,1]
+
+        Returns
+        -------
+        pts_x: iterable
+            transformed points, one array for each dimension in dims.
+
+        '''
+        if xform is None:
+            xform=self.grid.xform
+        if xform is None:
+            return pts
+        temp=(np.c_[[pp.ravel() for pp in pts[0:len(xform['origin'])]]].T \
+        - xform['origin']) @ xform['basis_vectors']
+        return [temp[:, dim].ravel() for dim in dims ]
+
     def ravel(self):
         self.r=self.r.ravel()
         self.c=self.c.ravel()
@@ -131,7 +160,7 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def interp_mtx(self, pts, xform=None, bounds_error=True):
+    def interp_mtx(self, pts_in, xform=None, dims=None, bounds_error=True):
         """
         Create a matrix that interpolates a grid to a set of points.
 
@@ -144,6 +173,11 @@ class lin_op:
             "basis_vectors": a matrix whose columns defining the axes of the
             transform.
             The default is None.
+        dims : iterable, optional
+            Specify which dimensions of the transformed coorinates will be
+            interpolated.  If None, all dimensions up to the dimensions of
+            self.grid are interpolated
+            The default is None
         bounds_error: boolean, optional
             If True, an error will occur if interpolation values are requested
             for points outside the grid.  If False, the interpolation will
@@ -157,18 +191,17 @@ class lin_op:
         if xform is None:
             if self.grid.xform is not None:
                 xform=self.grid.xform
-
-        if xform is None:
-            pts=[pp.ravel() for pp in pts]
+        if dims is None:
+            dims = np.arange(self.grid.N_dims, dtype=int)
+        if xform is not None:
+            pts = self.apply_xform(pts_in, xform, dims)
         else:
-            temp = (np.c_[[pp.ravel() for pp in pts[0:len(xform['origin'])]]].T \
-                    - xform['origin']) @ xform['basis_vectors']
-            pts =[ temp[:, dim].ravel() for dim in range(self.grid.N_dims) ]
+            pts = [jj.ravel() for jj in pts_in]
         # get indices of valid points
         row=np.flatnonzero(self.grid.validate_pts(pts))
         if bounds_error and len(row) < len(pts[0]):
             raise(ValueError(f'Found {len(pts[0])-len(row)} points out of bounds for grid {self.grid.name}'))
-        # subsample valid points
+        # subsample valid points.  row is now the index into the input arrays
         pts =[temp[row] for temp in pts]
         # Identify the nodes surrounding each data point
         # The floating-point subscript expresses the point locations in terms

@@ -347,7 +347,7 @@ def smooth_fit(**kwargs):
     'E_slope_bias':0.01,
     'E_RMS_d2x_PS_bias':None,
     'E_RMS_PS_bias':None,
-    'constraint_scaling_masks':None,
+    'constraint_scaling_maps':None,
     'error_res_scale':None,
     'avg_masks':None,
     'sigma_extra_masks':None,
@@ -478,7 +478,8 @@ def smooth_fit(**kwargs):
         # split grid bias params into jitter and non-jitter
         for params in args['sensor_grid_bias_params']:
             jitter_params={param.replace('jitter_',''):val for param, val in params.items() if 'jitter' in param}
-            non_jitter_params={param:val for param, val in params.items() if 'jitter' not in param}
+            stripe_params={param.replace('stripe_',''):val for param, val in params.items() if 'stripe' in param}
+            non_jitter_params={param:val for param, val in params.items() if 'jitter' not in param and 'stripe' not in param}
             if len(jitter_params):
                 try:
                     jitter_params['filename']=params['filename']
@@ -490,6 +491,21 @@ def smooth_fit(**kwargs):
                     grids[jitter_grid.name] = jitter_grid
                 except ValueError:
                     print(f"jitter fit failed for {params['filename']}")
+                    pass
+            if len(stripe_params):
+                try:
+                    stripe_params['filename']=params['filename']
+                    stripe_params['sensor']=params['sensor']
+                    stripe_params.update({'local_coord_index':1,
+                                          'coord_name':'y_atc',
+                                          'fit_name':'stripe'})
+                    Gd_stripe, stripe_constraint_list, xform, stripe_grid, xy_atc, poly =\
+                        setup_DEM_jitter_fit(data, col_0=G_data.col_N,  **stripe_params)
+                    G_data.add(Gd_stripe)
+                    constraint_op_list += stripe_constraint_list
+                    grids[stripe_grid.name] = stripe_grid
+                except ValueError:
+                    print(f"stripe fit failed for {params['filename']}")
                     pass
             if len(non_jitter_params) and 'spacing' in non_jitter_params:
                 setup_sensor_grid_bias(data, grids, G_data, \

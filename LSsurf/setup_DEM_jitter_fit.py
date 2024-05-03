@@ -63,10 +63,14 @@ def get_ATC_xform(filename, url_list_file):
     return xform, poly
 
 def parse_jitter_bias_grids(m0, G_data, grids):
-    sensor_bias_re=re.compile('sensor_.*_jitter')
+    sensor_bias_res=[re.compile('sensor_.*_jitter'), re.compile('sensor_.*_stripe')]
     m={}
     for key, cols in G_data.TOC['cols'].items():
-        if sensor_bias_re.search(key) is None:
+        skip=True
+        for sensor_bias_re in sensor_bias_res:
+            if sensor_bias_re.search(key) is not None:
+                skip=False
+        if skip:
             continue
         m[key]=pc.grid.data().from_dict({
             'x':grids[key].ctrs[0],\
@@ -80,6 +84,9 @@ def setup_DEM_jitter_fit(data, filename, col_0=0,
                      sensor=None,
                      expected_rms_grad=1.e-5, expected_rms_bias=2,
                      skip_plane=False,
+                     local_coord_index=0,
+                     coord_name='x_atc',
+                     fit_name='jitter',
                      expected_plane_slope=0.02, expected_plane_bias=5,
                      **kwargs):
     """
@@ -104,7 +111,13 @@ def setup_DEM_jitter_fit(data, filename, col_0=0,
     expected_rms_bias : float, optional
         Expected value for the RMS of the solution. The default is 2.
     skip_plane : float, optional
-        If True, no plane is fit to the residuals
+        If True, no plane is fit to the residuals.  The default is False.
+    local_coord_index : int, optional
+        Which local coordinate to use (0-> along-track->jitter, 1->xtrack->stripes).  The default is 0.
+    coord_name : str, optional
+        Name of the coordinate to be fit (use x_atc for the jitter fit).  The default is 'x_atc'
+    fit_name : str, optional
+        Name of the fit (use 'jitter' for a jitter fit, or 'stripe' for a stripe fit).  The default is 'jitter'
     expected_plane_slope : float, optional
         Expected slope of the mean tilt of the solution. The default is 0.02.
     expected_plane_bias : float, optional
@@ -130,22 +143,28 @@ def setup_DEM_jitter_fit(data, filename, col_0=0,
     if sensor is not None:
         sensor_rows=np.flatnonzero(data.sensor==sensor)
         D = data[sensor_rows]
-        name=f'sensor_{sensor}_jitter'
+        name=f'sensor_{sensor}_{fit_name}'
     else:
         D = data
-        name='jitter'
+        name='fit_name'
 
     xform, poly = get_ATC_xform(filename, url_list_file)
 
     xy_atc = (np.c_[D.x, D.y] - xform['origin']) @ xform['basis_vectors']
 
-    XlR = np.round(np.array([ np.min(xy_atc[:,0]), np.max(xy_atc[:,0]) ])/res + np.array([-1, 1]))*res
-    grid = LS.fd_grid([XlR], [res], name=name+'_x_atc', xform=xform)
+    # Along-track nodes:
+    local_coord=xy_atc[:, local_coord_index]
+    XlR = np.round(np.array([ np.min(local_coord), np.max(local_coord) ])/res + np.array([-1, 1]))*res
+
+    grid_name=name+'_'+coord_name
+
+    grid = LS.fd_grid([XlR], [res], name=grid_name, xform=xform)
     grid.col_0 = col_0
     grid.col_N = grid.col_0 + grid.N_nodes
 
     # data fit
-    Gd = LS.lin_op( grid = grid, name=name).interp_mtx([D.x, D.y])
+    Gd = LS.lin_op( grid = grid, name=name).interp_mtx([D.x, D.y],
+                                                       dims=[local_coord_index])
     if not skip_plane > 0:
         # plane fit
         G_plane = LS.lin_op( col_0=Gd.col_N, col_N = Gd.col_N+3 )

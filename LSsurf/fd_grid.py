@@ -20,6 +20,37 @@ class fd_grid(object):
     # that is greater than the number of nodes.
     def __init__(self, bounds, deltas, name='', col_0=0, col_N=None, srs_proj4=None, \
                  mask_file=None, mask_data=None, mask_interp_threshold=0.5, xform=None):
+        """
+        Generate new fd_grid object
+
+        Parameters
+        ----------
+        bounds : iterable
+            Minimum and maximum of coordinates in each dimension.
+        deltas : iterable
+            resolution in each dimension.
+        name : str, optional
+            Name of grid. The default is ''.
+        col_0 : int, optional
+            First column in grid. The default is 0.
+        col_N : int, optional
+            Last column in grid.  If None, will be set based on the number of nodes. The default is None.
+        srs_proj4 : str, optional
+            Proj4 string for grid's projection. The default is None.
+        mask_file : str, optional
+            If specified, this geotif or hdf5 file will be read into the object's mask field. The default is None.
+        mask_data : str or ndarray, optional
+            Mask data for array, or file (geotif or hdf5) containing mask data. The default is None.
+        mask_interp_threshold : float, optional
+            Value used to map mask values to zero or 1. The default is 0.5.
+        xform : dict optional
+            dict containing fields 'origin' and 'basis_vectors'. The default is None.
+
+        Returns
+        -------
+        None.
+
+        """
         self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
@@ -44,6 +75,7 @@ class fd_grid(object):
                         interp_threshold=self.mask_interp_threshold)
 
     def copy(self):
+
         return copy.deepcopy(self)
 
     def validate_pts(self, pts):

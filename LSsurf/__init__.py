@@ -3,6 +3,8 @@ from LSsurf.data_slope_bias import data_slope_bias
 from LSsurf.fd_grid import fd_grid
 from LSsurf.lin_op import lin_op
 from LSsurf.matlab_to_year import matlab_to_year
+from LSsurf.smooth_fit import smooth_fit
+from LSsurf.smooth_fit import iterate_fit
 from LSsurf.smooth_xyt_fit import smooth_xyt_fit
 from LSsurf.smooth_xytb_fit import smooth_xytb_fit
 from LSsurf.setup_grid_bias import setup_grid_bias
@@ -24,3 +26,5 @@ from LSsurf.calc_sigma_extra import calc_sigma_extra,\
 from LSsurf.unique_by_rows import unique_by_rows
 from LSsurf.match_priors import match_tile_edges, match_prior_dz
 from LSsurf.hermite_poly_fit import *
+from LSsurf.get_pgc import *
+from LSsurf.setup_DEM_jitter_fit import *

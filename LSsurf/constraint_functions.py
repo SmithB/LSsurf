@@ -20,7 +20,7 @@ import scipy.sparse as sp
 
 
 
-def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
+def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, scaling_masks=None):
     """
     Setup the smoothness constraint operators for dz and z0
 
@@ -33,6 +33,9 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
     Outputs:
     None (appends to constraint_op_list)
     """
+    if scaling_masks is None:
+        scaling_masks={}
+
     # make the smoothness constraints for z0
     root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
     grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
@@ -44,16 +47,27 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
         grad_z0.expected=E_RMS['dz0_dx']/root_delta_A_z0*grad_z0.mask_for_ind0(mask_scale)
         constraint_op_list += [grad_z0]
 
+    if 'z0' in E_RMS and E_RMS['z0'] is not None:
+        mag_z0=lin_op(grids['z0'], name='mag_z0').one(DOF='z0')
+        mag_z0.expected=E_RMS['z0']/root_delta_A_z0*np.ones_like(mag_z0.v.ravel())
+        constraint_op_list += [mag_z0]
+
     # make the smoothness constraints for dz
     root_delta_V_dz=np.sqrt(np.prod(grids['dz'].delta))
     if 'd3z_dx2dt' in E_RMS and E_RMS['d3z_dx2dt'] is not None:
         grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z', t_lag=1)
         grad2_dz.expected=E_RMS['d3z_dx2dt']/root_delta_V_dz*grad2_dz.mask_for_ind0(mask_scale)
+        if 'd3z_dx2dt' in scaling_masks:
+            grad2_dz.expected *= grad2_dz.mask_for_ind0(mask=scaling_masks['d3z_dx2dt'])
         constraint_op_list += [grad2_dz]
 
     if 'd2z_dxdt' in E_RMS and E_RMS['d2z_dxdt'] is not None:
         grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z', t_lag=1)
         grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(mask_scale)
+        for key in ['d2z_dx2dt','d3z_dx2dt']:
+            if key in scaling_masks:
+                grad_dzdt.expected *= grad_dzdt.mask_for_ind0(mask=scaling_masks[key])
+                break
         constraint_op_list += [ grad_dzdt ]
 
     if 'd2z_dt2' in E_RMS and E_RMS['d2z_dt2'] is not None:
@@ -69,7 +83,7 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale):
 
     if 'lagrangian_dzdx' in E_RMS and E_RMS['lagrangian_dzdx'] is not None:
         root_A_lag=np.sqrt(grids['lagrangian_dz'].delta[0]*grids['lagrangian_dz'].delta[1])
-        grad_lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms').grad(DOF='lagrangian_dz')
+        grad_lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms_grad').grad(DOF='lagrangian_dz')
         grad_lag_dz.expected = np.zeros(grad_lag_dz.N_eq) + E_RMS['lagrangian_dzdx']/root_A_lag
         constraint_op_list += [grad_lag_dz]
 

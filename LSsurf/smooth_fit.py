@@ -329,6 +329,7 @@ def smooth_fit(**kwargs):
     'min_iterations':2,
     'sigma_extra_bin_spacing':None,
     'sigma_extra_max':None,
+    'sigma_extra_keys':None,
     'srs_proj4': None,
     'N_subset': None,
     'bias_params': None,
@@ -399,10 +400,18 @@ def smooth_fit(**kwargs):
     else:
         validate_by_dz_mask(data, grids, valid_data)
 
-    # update the sigma_extra_masks variable to the data mask
-    if args['sigma_extra_masks'] is not None:
-        for key in args['sigma_extra_masks']:
-            args['sigma_extra_masks'][key]=args['sigma_extra_masks'][key][valid_data==1]
+    # make the sigma_extra_masks if sigma_extra_keys has been provided
+    if args['sigma_extra_keys'] is not None:
+        args['sigma_extra_masks']={}
+        for key, field_vals in args['sigma_extra_keys'].items():
+            args['sigma_extra_masks'][key]=np.zeros_like(data.sensor, dtype=bool)
+            for field, vals in field_vals.items():
+                args['sigma_extra_masks'][key] |= np.in1d(getattr(data, field), vals)
+    else:
+        # update the sigma_extra_masks variable to the data mask
+        if args['sigma_extra_masks'] is not None:
+            for key in args['sigma_extra_masks']:
+                args['sigma_extra_masks'][key]=args['sigma_extra_masks'][key][valid_data==1]
 
     # Check if we have any data.  If not, quit
     if data.size==0:
@@ -484,13 +493,16 @@ def smooth_fit(**kwargs):
                 try:
                     jitter_params['filename']=params['filename']
                     jitter_params['sensor']=params['sensor']
+                    if 'sensor' in jitter_params and np.sum(data.sensor==jitter_params['sensor']) < 1:
+                        continue
                     Gd_jitter, jitter_constraint_list, xform, jitter_grid, xy_atc, poly =\
                         setup_DEM_jitter_fit(data, col_0=G_data.col_N, **jitter_params)
                     G_data.add(Gd_jitter)
                     constraint_op_list += jitter_constraint_list
                     grids[jitter_grid.name] = jitter_grid
-                except ValueError:
+                except ValueError as e:
                     print(f"jitter fit failed for {params['filename']}")
+                    raise(e)
                     pass
             if len(stripe_params):
                 try:
@@ -499,13 +511,16 @@ def smooth_fit(**kwargs):
                     stripe_params.update({'local_coord_index':1,
                                           'coord_name':'y_atc',
                                           'fit_name':'stripe'})
+                    if 'sensor' in stripe_params and np.sum(data.sensor==stripe_params['sensor']) < 1:
+                        continue
                     Gd_stripe, stripe_constraint_list, xform, stripe_grid, xy_atc, poly =\
                         setup_DEM_jitter_fit(data, col_0=G_data.col_N,  **stripe_params)
                     G_data.add(Gd_stripe)
                     constraint_op_list += stripe_constraint_list
                     grids[stripe_grid.name] = stripe_grid
-                except ValueError:
+                except ValueError as e:
                     print(f"stripe fit failed for {params['filename']}")
+                    raise(e)
                     pass
             if len(non_jitter_params) and 'spacing' in non_jitter_params:
                 setup_sensor_grid_bias(data, grids, G_data, \
@@ -609,7 +624,8 @@ def smooth_fit(**kwargs):
         # still need to make the averaging ops
         averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
         # setup masked averaging ops
-        averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+        averaging_ops.update(
+            setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 
 
     # Compute the error in the solution if requested

@@ -493,6 +493,8 @@ def smooth_fit(**kwargs):
                 try:
                     jitter_params['filename']=params['filename']
                     jitter_params['sensor']=params['sensor']
+                    if 'xform' in params:
+                        jitter_params['xform']=params['xform']
                     if 'sensor' in jitter_params and np.sum(data.sensor==jitter_params['sensor']) < 1:
                         continue
                     Gd_jitter, jitter_constraint_list, xform, jitter_grid, xy_atc, poly =\
@@ -508,6 +510,8 @@ def smooth_fit(**kwargs):
                 try:
                     stripe_params['filename']=params['filename']
                     stripe_params['sensor']=params['sensor']
+                    if 'xform' in params:
+                        stripe_params['xform']=params['xform']
                     stripe_params.update({'local_coord_index':1,
                                           'coord_name':'y_atc',
                                           'fit_name':'stripe'})

@@ -35,7 +35,8 @@ def get_ATC_xform(filename, url_list_file):
     '''
 
     # read the PGC metadata
-    meta=LS.get_pgc(os.path.basename(filename), url_list_file, targets=['meta'])['meta']
+
+    meta=LS.get_pgc(filename, url_list_file, targets=['meta'])['meta']
     gdf=gpd.GeoDataFrame.from_features([meta])
 
     # select the projection based on the first y coordinate of the bounding box
@@ -148,7 +149,11 @@ def setup_DEM_jitter_fit(data, filename, col_0=0,
         D = data
         name='fit_name'
 
-    xform, poly = get_ATC_xform(filename, url_list_file)
+    if 'xform' in kwargs:
+        xform=kwargs['xform']
+        poly=None
+    else:
+        xform, poly = get_ATC_xform(filename, url_list_file)
 
     xy_atc = (np.c_[D.x, D.y] - xform['origin']) @ xform['basis_vectors']
 

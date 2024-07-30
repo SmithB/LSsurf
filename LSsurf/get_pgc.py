@@ -21,7 +21,7 @@ def get_pgc_url(filename, pgc_url_file):
     #pgc_re=re.compile('(SETSM_.*_)\d+m(_lsf_seg\d+)')
     #new:
     pgc_re=re.compile('(SETSM_.*_)\d+m(.*_seg\d+)')
-    pgc_base='2m'.join(list(pgc_re.search(filename).groups()))
+    pgc_base='2m'.join(list(pgc_re.search(os.path.basename(filename)).groups()))
     #print(pgc_base)
 
     pgc_url=None
@@ -51,8 +51,21 @@ def download_pgc(filename, pgc_url, extension, file_type='.tif'):
 
 def get_meta_from_json(filename, pgc_url):
     """Get the metadata for the filename from the pcg json file."""
-    return json.loads(
-        requests.get(pgc_url+'.json').content)
+
+    pgc_re=re.compile('(SETSM_.*_)\d+m(.*_seg\d+)')
+    file_2m='2m'.join(list(pgc_re.search(os.path.basename(filename)).groups()))
+    meta_file=os.path.join(os.path.dirname(os.path.dirname(filename)), 'meta', file_2m+'.json')
+    if os.path.isfile(meta_file):
+        with open(meta_file,'r') as fh:
+            return json.load(fh)
+    else:
+        temp=json.loads(
+            requests.get(pgc_url+'.json').content)
+        if os.path.isdir(os.path.dirname(meta_file)):
+            with open(meta_file,'w') as fh:
+                json.dump(temp, fh)
+        return temp
+
 
 def get_pgc(filename, pgc_url_file, targets=['url']):
     """
@@ -74,6 +87,7 @@ def get_pgc(filename, pgc_url_file, targets=['url']):
 
     """
     out={}
+    print("pgc_url_file is "+pgc_url_file)
     pgc_url=get_pgc_url(filename, pgc_url_file)
     if 'url' in targets:
         out['url']=pgc_url

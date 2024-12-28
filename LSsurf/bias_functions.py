@@ -14,7 +14,7 @@ import pointCollection as pc
 
 '''  Functions to assign and manipulate biase estimates for surface fits
 
-    Contains: 
+    Contains:
         assign_bias_ID
         setup_bias_fit
         parse_biases
@@ -115,7 +115,7 @@ def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
     G_data.add(G_bias)
 
 
-def parse_biases(m, bias_model, bias_params):
+def parse_biases(m, bias_model, bias_params, data=None):
     """
         parse the biases in the ouput model
 
@@ -129,6 +129,12 @@ def parse_biases(m, bias_model, bias_params):
     """
     slope_bias_dict={}
     b_dict={param:list() for param in bias_params+['val','ID','expected']}
+    if data is not None:
+        b_dict['rms_data_raw']=[]
+        b_dict['rms_data_edited']=[]
+        b_dict['N_raw']=[]
+        b_dict['N_edited']=[]
+        r = data.z-data.z_est
     # loop over the keys in bias_model['bias_ID_dict']
     for item in bias_model['bias_ID_dict']:
         b_dict['val'].append(m[bias_model['bias_ID_dict'][item]['col']])
@@ -136,7 +142,23 @@ def parse_biases(m, bias_model, bias_params):
         b_dict['expected'].append(bias_model['E_bias'][item])
         for param in bias_params:
             b_dict[param].append(bias_model['bias_ID_dict'][item][param])
+        if data is not None:
+            jj = data.bias_ID==item
+            r1=r[jj]
+            if len(r1)==0:
+                b_dict['rms_data_raw'].append(np.NaN)
+            else:
+                b_dict['rms_data_raw'].append(np.nanstd(r1))
+            b_dict['N_raw'].append(len(r1))
+            r2 = r[jj & (data.three_sigma_edit==1)]
+            b_dict['N_edited'].append(len(r2))
+            if len(r2)==0:
+                b_dict['rms_data_edited'].append(np.NaN)
+            else:
+                b_dict['rms_data_edited'].append(np.nanstd(r2))
+
     if 'slope_bias_dict' in bias_model:
         for key in bias_model['slope_bias_dict']:
             slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
+
     return b_dict, slope_bias_dict

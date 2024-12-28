@@ -73,6 +73,8 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
     if 'd2z_dt2' in E_RMS and E_RMS['d2z_dt2'] is not None:
         d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
         d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + E_RMS['d2z_dt2']/root_delta_V_dz
+        if 'd2z_dt2' in scaling_masks:
+            d2z_dt2.expected *= d2z_dt2.mask_for_ind0(mask=scaling_masks['d2z_dt2'])
         constraint_op_list += [d2z_dt2]
 
     if 'lagrangian_dz' in E_RMS and E_RMS['lagrangian_dz'] is not None:

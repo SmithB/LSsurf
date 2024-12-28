@@ -275,7 +275,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
 
     # report the parameter biases.  Sorted in order of the parameter bias arguments
     if len(bias_model.keys()) > 0:
-        m['bias'], m['slope_bias']=parse_biases(m0, bias_model, args['bias_params'])
+        m['bias'], m['slope_bias'] = parse_biases(m0, bias_model, args['bias_params'], data = data)
 
     # report the entire model vector, just in case we want it.
     m['all']=m0
@@ -323,7 +323,7 @@ def smooth_fit(**kwargs):
     'mask_file':None,
     'mask_data':None,
     'mask_update_function':None,
-    'mask_scale':None,
+    'mask_scale': {0:10,1:1},
     'compute_E':False,
     'max_iterations':10,
     'min_iterations':2,

@@ -87,7 +87,6 @@ def get_pgc(filename, pgc_url_file, targets=['url']):
 
     """
     out={}
-    print("pgc_url_file is "+pgc_url_file)
     pgc_url=get_pgc_url(filename, pgc_url_file)
     if 'url' in targets:
         out['url']=pgc_url

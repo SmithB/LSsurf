@@ -16,7 +16,7 @@ from libc.math cimport abs
 @cython.nonecheck(False)
 
 #def propagate_qz_errors(np.ndarray[ITYPE_t, ndim=1] indptr, np.ndarray[ITYPE_t, ndim=1] indices, np.ndarray[FTYPE_t, ndim=1] data, np.ndarray[FTYPE_t, ndim=1] E):
-def inv_tr_upper(R,  np.int_t nnz, float tol):
+def inv_tr_upper(R,  int nnz, float tol):
     """
     Solves the equation R Rinv = I for Rinv, calculates the row-wise RSS of Rinv
     ----------

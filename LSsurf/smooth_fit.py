@@ -432,7 +432,7 @@ def smooth_fit(**kwargs):
             else:
                 constraint_scaling_masks[key] =\
                     this_map.interp(grids['dz'].ctrs[1], grids['dz'].ctrs[0], gridded=True)
-
+            constraint_scaling_masks[key][~np.isfinite(constraint_scaling_masks[key])]=1.
     # define the smoothness constraints
     constraint_op_list=[]
     print(f"smooth_fit: E_RMS={args['E_RMS']}")

@@ -101,7 +101,7 @@ class fd_grid(object):
 
     def float_sub(self, pts, good=None):
         # find the normalized point location within the grid (in subscript coordinates)
-        idxf=[np.NaN+np.zeros_like(pts[0]) for i in range(len(pts))]
+        idxf=[np.nan+np.zeros_like(pts[0]) for i in range(len(pts))]
         if good is None:
             good=self.validate_pts(pts)
         for dim in range(self.N_dims):
@@ -110,7 +110,7 @@ class fd_grid(object):
 
     def cell_sub_for_pts(self, pts, good=None):
         # find the cell number (equal to the next-smallest subscript) in each dimension
-        idx0=[np.NaN+np.zeros_like(pts[0]) for i in range(len(pts))]
+        idx0=[np.nan+np.zeros_like(pts[0]) for i in range(len(pts))]
         if good is None:
             good=self.validate_pts(pts)
         # report the grid indices for the cell that each point in pts falls into
@@ -166,7 +166,7 @@ class fd_grid(object):
         # turn the invalid values in the input dataset into NaNs
         inNodata=in_ds.GetRasterBand(1).GetNoDataValue()
         if inNodata is not None:
-            z[z==inNodata]=np.NaN
+            z[z==inNodata]=np.nan
         # flip z top to bottom
         z=np.flipud(z)
 

@@ -66,7 +66,7 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
         this_ind=this_param_dict[tuple(param_vals)]
         # report invalid parameter values as NaN
         out_param_vals=param_vals.copy()
-        out_param_vals[out_param_vals==NDV] = np.NaN
+        out_param_vals[out_param_vals==NDV] = np.nan
         param_vals_dict={}
         #Identify the data that match the parameter values
         for i_param, param in enumerate(bias_params):
@@ -146,14 +146,14 @@ def parse_biases(m, bias_model, bias_params, data=None):
             jj = data.bias_ID==item
             r1=r[jj]
             if len(r1)==0:
-                b_dict['rms_data_raw'].append(np.NaN)
+                b_dict['rms_data_raw'].append(np.nan)
             else:
                 b_dict['rms_data_raw'].append(np.nanstd(r1))
             b_dict['N_raw'].append(len(r1))
             r2 = r[jj & (data.three_sigma_edit==1)]
             b_dict['N_edited'].append(len(r2))
             if len(r2)==0:
-                b_dict['rms_data_edited'].append(np.NaN)
+                b_dict['rms_data_edited'].append(np.nan)
             else:
                 b_dict['rms_data_edited'].append(np.nanstd(r2))
 

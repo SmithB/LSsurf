@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xa
 
 import scipy.interpolate as si
-import pyproj 
+import pyproj
 import matplotlib.pyplot as plt
 
 def clip(x, interval):
@@ -19,14 +19,14 @@ def clip(x, interval):
         x[x<interval[0]]=interval[0]
     if np.any(x > interval[1]):
         x[x>interval[1]]=interval[1]
-    return 
+    return
 
 def interp_MAR_firn(x, y, year):
 
     firn_file='/Volumes/ice2/ben/MAR/MARv3.9_Greenland_Daily/MAR-GRq-ERA-7_5km_firnAir.nc'
     season_file='/Volumes/ice2/ben/MAR/MARv3.9_Greenland_Daily/MAR-GRq-ERA-7_5km_season_h_anomaly.nc'
 
-    dh=np.zeros_like(x)+np.NaN
+    dh=np.zeros_like(x)+np.nan
     P_ll=pyproj.Proj(init='EPSG:4326')
     P_ps=pyproj.Proj(init='EPSG:3413')
     t0=1980.0
@@ -48,24 +48,23 @@ def interp_MAR_firn(x, y, year):
     these= in_bounds & good
     if np.any(these):
         dh[these]=LND.__call__((year[these]-t0, iy[these], ix[these]))
-    
-    # interpolate the  FDM data  
+
+    # interpolate the  FDM data
     if np.any(year-t0  > t_last):
         these=(~in_bounds) & good
         if np.any(these):
             with xa.open_dataset(season_file) as fa:
                 LND=si.RegularGridInterpolator((fa['delta_time'], fa['Y20_377'], fa['X12_203']), np.array(fa['mean_dh'])+fh_end)
                 t_temp=np.mod(year[these], 1)
-                clip(t_temp, [float(np.min(fa['delta_time'])), float(np.max(fa['delta_time']))])               
+                clip(t_temp, [float(np.min(fa['delta_time'])), float(np.max(fa['delta_time']))])
                 dh[these]=LND.__call__((t_temp, iy[these], ix[these]))
     return dh
 
-def __main__():            
+def __main__():
     # test function
-    xy=(-142833.06277056271, -2224375.2705627708) 
+    xy=(-142833.06277056271, -2224375.2705627708)
     tt=np.arange(1980, 2019.5, 0.1)
     xx=np.zeros_like(tt)+xy[0]
     yy=np.zeros_like(tt)+xy[1]
     fh=interp_MAR_firn(xx,yy,tt)
     plt.plot(tt, fh)
-    

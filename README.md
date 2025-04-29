@@ -3,7 +3,7 @@ Utilities for performing smooth least-squares fits in Python
 
 These scripts include utilities for fitting smooth surfaces to data in a least-squares sense.  They operate on the principle of building a design matrix while keeping track of the relationship between degrees of freedom and columns and between data, constraint parameters, and rows.
 
-The main functions of the repository are used in LSsurf/smooth_fit.py, which fits smooth gridded surfaces to pointwise input data.  See the xytb_fit_demo.ipynb notebook in the notebooks directory for a demonstration.  The functionality is built around my pointCollection library (https://www.github.com/smithb/pointCollection.git) which provides data structures for manipulating point data.
+The main functions of the repository are used in LSsurf/smooth_fit.py, which fits smooth gridded surfaces to pointwise input data.  See the smooth_fit_demo.ipynb notebook in the notebooks directory for a demonstration.  The functionality is built around my pointCollection library (https://www.github.com/smithb/pointCollection.git) which provides data structures for manipulating point data.
 
 
 # Setup

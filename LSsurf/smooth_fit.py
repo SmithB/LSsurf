@@ -448,7 +448,8 @@ def smooth_fit(**kwargs):
 
     # define the smoothness constraints
     constraint_op_list=[]
-    print(f"smooth_fit: E_RMS={args['E_RMS']}")
+    if args['VERBOSE']:
+        print(f"smooth_fit: E_RMS={args['E_RMS']}")
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'],
                                  args['mask_scale'],
                                  scaling_masks = constraint_scaling_masks)

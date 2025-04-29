@@ -154,9 +154,9 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         in_TSE_last=in_TSE
         in_TSE = (np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
-        
+
         # if bias_nsigma_edit is specified, check for biases that are more than
-        # args['bias_nsigma_edit'] times their expected values.  
+        # args['bias_nsigma_edit'] times their expected values.
         if  args['bias_nsigma_edit'] is not None and iteration >= args['bias_nsigma_iteration']:
             if 'edited' not in bias_model['bias_param_dict']:
                 bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
@@ -185,7 +185,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
 
         if args['DEM_tol'] is not None:
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
-        
+
         max_model_change_dz=np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']]))
 
         if args['VERBOSE']:
@@ -202,7 +202,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,\
             frac_TSE_change = len(np.setxor1d(in_TSE_last, in_TSE))/N_editable
             if frac_TSE_change < args['converge_tol_frac_TSE']:
                 if args['VERBOSE']:
-                    print("filtering unchanged with tolerance %3.5f, exiting after iteration %d" 
+                    print("filtering unchanged with tolerance %3.5f, exiting after iteration %d"
                           % (args['converge_tol_frac_TSE'], iteration))
                 break
         if iteration >= min_tse_iterations:
@@ -306,7 +306,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
             this_grid=temp['grid']
             m['grid_biases'][this_grid.name]=pc.grid.data().from_dict({
                 'x': this_grid.ctrs[1],
-                'y': this_grid.ctrs[0], 
+                'y': this_grid.ctrs[0],
                 this_grid.name:np.reshape(m0[this_grid.col_0:this_grid.col_N], this_grid.shape)})
 
     #if 'PS_bias' in G_data.TOC['cols']:
@@ -351,7 +351,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     for ff in ['dz','z0']:
         m[ff].assign({'count':G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.\
                         dot(np.ones_like(r)).reshape(grids[ff].shape)})
-        m[ff].count[m[ff].count==0]=np.NaN
+        m[ff].count[m[ff].count==0]=np.nan
         m[ff].assign({'misfit_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_scaled**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
         m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\
@@ -460,12 +460,12 @@ def smooth_xytb_fit(**kwargs):
     # define the smoothness constraints
     constraint_op_list=[]
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'], args['mask_scale'])
-    
+
     # setup the smooth biases
     if args['grid_bias_model_args'] is not None:
         for bm_args in args['grid_bias_model_args']:
             setup_grid_bias(data, G_data, constraint_op_list, grids, **bm_args)
-    
+
     #if args['E_RMS_d2x_PS_bias'] is not None:
     #    setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
 
@@ -484,7 +484,7 @@ def smooth_xytb_fit(**kwargs):
             for row in edit_bias_list:
                 bias_model['bias_param_dict']['edited'][bias_list.index(row)]=True
             # apply the editing to the three_sigma_edit variable
-            bad_IDs=[bias_model['bias_param_dict']['ID'][ii] 
+            bad_IDs=[bias_model['bias_param_dict']['ID'][ii]
                      for ii in np.flatnonzero(bias_model['bias_param_dict']['edited'])]
             data.three_sigma_edit[np.in1d(data.bias_ID, bad_IDs)]=False
     else:

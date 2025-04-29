@@ -246,8 +246,9 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def one(self, DOF='z'):
-        self.diff_op([[0], [0]], np.array([1.]))
+    def one(self, DOF='z', which_nodes=None):
+        self.diff_op([[0]]*len(self.grid.shape), np.array([1.]),
+                     which_nodes=which_nodes)
         self.__update_size_and_shape__()
         return self
 
@@ -531,7 +532,7 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        P=np.zeros(grid.col_N+1)+np.NaN
+        P=np.zeros(grid.col_N+1)+np.nan
         # added col_N=m.size
         P[ind0]=self.toCSR(row_N=ind0.size, col_N=m.size).dot(m).ravel()
         return P[grid.col_0:grid.col_N].reshape(grid.shape)
@@ -547,7 +548,7 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        E=np.zeros(self.col_N)+np.NaN
+        E=np.zeros(self.col_N)+np.nan
         E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size, col_N=Rinv.shape[0]).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 

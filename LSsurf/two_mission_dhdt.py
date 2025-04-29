@@ -39,21 +39,21 @@ def GI_files(hemisphere):
 def read_ICESat(xy0, W, gI, sensor=1):
     fields=[ 'IceSVar', 'deltaEllip', 'numPk', 'ocElv', 'reflctUC', 'satElevCorr',  'time',  'x', 'y', 'z','sensor']
     D0=gI.query_xy_box(xy0[0]+np.array([-W['x']/2, W['x']/2]), xy0[1]+np.array([-W['y']/2, W['y']/2]), fields=fields)
-    # Per Adrian: Subtract 1.7 cm from laser 2, add 1.7 cm to laser 3 
+    # Per Adrian: Subtract 1.7 cm from laser 2, add 1.7 cm to laser 3
     # these are the laser numbers in order:
     laser=np.array([1, 2,  2,  2, 3, 3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  2,  2, 2]);
     # these are the biases.  Index biases by laser number, and there's your correction!
-    bias_correction_vals=np.array([np.NaN, -0.017, +0.011])
+    bias_correction_vals=np.array([np.nan, -0.017, +0.011])
     for ind, D in enumerate(D0):
         good=(D.IceSVar < 0.035) & (D.reflctUC >0.05) & (D.satElevCorr < 1) & (D.numPk==1)
         good=good.ravel()
         D.subset(good, datasets=['x','y','z','time'])
         D.assign({'sigma':np.zeros_like(D.x)+0.02, 'sigma_corr':np.zeros_like(D.x)+0.05})
         # 'sensor' in the matlab-h5 world is equivalent to campaign/100.  Let's use these as cycles
-        D.assign({'cycle': -D.sensor*100})        
+        D.assign({'cycle': -D.sensor*100})
         # apply the Uyuni correcion
         D.z += bias_correction_vals[laser[-D.cycle.astype(int)]]
-        
+
         # assign a fake RGT, BP, LR number
         D.assign({'rgt':-100+np.zeros_like(D.x)})
         D.assign({'BP':np.zeros_like(D.x)})
@@ -75,12 +75,12 @@ def reconstruct_tracks(D):
         else:
             ind=np.argsort(D.time[bin_dict[key]])
         this_D=D.subset(bin_dict[key][ind])
-        D0.append(this_D)   
+        D0.append(this_D)
     return D0
 
 
 def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2):
-    field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'], 
+    field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'],
                 'fit_statistics':['dh_fit_dx'],
                 'ground_track':['x_atc'],
                 'geophysical' : ['dac'],
@@ -93,7 +93,7 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         fields += ['x','y']
     else:
         fields=field_dict
-    px, py=np.meshgrid(np.arange(xy0[0]-W['x']/2, xy0[0]+W['x']/2+1.e4, 1.e4),np.arange(xy0[1]-W['y']/2, xy0[1]+W['y']/2+1.e4, 1.e4) )  
+    px, py=np.meshgrid(np.arange(xy0[0]-W['x']/2, xy0[0]+W['x']/2+1.e4, 1.e4),np.arange(xy0[1]-W['y']/2, xy0[1]+W['y']/2+1.e4, 1.e4) )
     D0=geo_index().from_file(gI_file).query_xy((px.ravel(), py.ravel()), fields=fields)
     if D0 is None or len(D0)==0:
         return [None]
@@ -113,18 +113,18 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
         try:
             segDifferenceFilter(D, setValid=False, toNaN=True, tol=seg_diff_tol)
         except TypeError as e:
-            print("HERE")          
+            print("HERE")
             print(e)
-        D.h_li[D.atl06_quality_summary==1]=np.NaN
+        D.h_li[D.atl06_quality_summary==1]=np.nan
         # rename the h_li field to 'z', and rename the 'matlab_time' to 'day'
         D.assign({'z': D.h_li+D.dac,'time':D.matlab_time,'sigma':D.h_li_sigma,'sigma_corr':D.sigma_geo_h,'cycle':D.cycle_number})
         D.assign({'year':D.delta_time/24./3600./365.25+2018})
         # thin to 40 m
-        D.index(np.mod(D.segment_id, 2)==0)  
+        D.index(np.mod(D.segment_id, 2)==0)
         if 'x' not in D.list_of_fields:
             D.get_xy(SRS_proj4)
         #D.index(np.isfinite(D.h_li), list_of_fields=['x','y','z','time','year','sigma','sigma_corr','rgt','cycle'])
-                
+
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
         D1[ind]=D.subset(np.isfinite(D.h_li), datasets=['x','y','z','time','delta_time','year','sigma','sigma_corr','rgt','cycle','sensor', 'BP','LR'])
     return D1
@@ -132,13 +132,13 @@ def read_ICESat2(xy0, W, gI_file, sensor=2, SRS_proj4=None, tiled=True, seg_diff
 def reread_data_from_files(xy0, W, thedir, template='E%d_N%d.h5'):
     """
     Read data from a set of output (fit) files
-    
+
     Inputs:
         xy0: 2-tuple box center
         W: box width
         thedir: directory to search
         template: template for file format
-    For a directory of files, find the files overlapping the requested box, and 
+    For a directory of files, find the files overlapping the requested box, and
     select the data closest to the box center
     """
     d_i, d_j = np.meshgrid([-1., 0, 1.], [-1., 0., 1.])
@@ -153,7 +153,7 @@ def reread_data_from_files(xy0, W, thedir, template='E%d_N%d.h5'):
                 this_data=dict()
                 for key in h5f['data'].keys():
                     this_data[key]=np.array(h5f['data'][key])
-            this_data=point_data(list_of_fields=this_data.keys()).from_dict(this_data)       
+            this_data=point_data(list_of_fields=this_data.keys()).from_dict(this_data)
             these=(np.abs(this_data.x-xy0[0])<W/2) & \
                 (np.abs(this_data.y-xy0[1])<W/2)
             this_data.index(these) # & (this_data.three_sigma_edit))
@@ -164,7 +164,7 @@ def reread_data_from_files(xy0, W, thedir, template='E%d_N%d.h5'):
             this_index['xyb0']=np.unique(this_index['xyb'])
             this_index['dist0']=np.abs(this_index['xyb0']-(this_xy[0]+1j*this_xy[1]))
             this_index['N']=len(data_list)-1+np.zeros_like(this_index['xyb0'], dtype=int)
-            index_list.append(this_index) 
+            index_list.append(this_index)
     index={key:np.concatenate([item[key] for item in index_list]) for key in ['xyb0', 'dist0','N']}
     bins=np.unique(index['xyb0'])
     data_sub_list=[]
@@ -184,9 +184,9 @@ def read_OIB_data(xy0, W, reread_file=None, hemisphere=-1, blockmedian_scale=100
     if reread_file is None:
         GI=geo_index().from_file(GI_files(hemisphere)['ICESat2'], read_file=False)
         D = read_ICESat2(xy0, W, GI,  SRS_proj4=SRS_proj4)
-        GI=None    
+        GI=None
         GI=geo_index().from_file(GI_files(hemisphere)['ICESat1'], read_file=False)
-        D += read_ICESat(xy0, W, GI)    
+        D += read_ICESat(xy0, W, GI)
         GI=None
         data=point_data(list_of_fields=['x','y','z','time','sigma','sigma_corr','sensor','cycle','rgt', 'BP','LR']).from_list(D)
         data.assign({'day':np.floor(data.time)})
@@ -224,7 +224,7 @@ def save_fit_to_file(S,  filename, sensor_dict=None):
             for ii, name in enumerate(['y','x','t']):
                 try:
                     h5f.create_dataset('/'+this_key+'/'+name, data=S['grids'][this_key].ctrs[ii])
-                except: 
+                except:
                     pass
             h5f.create_dataset('/'+this_key+'/z', data=S['m'][this_key])
         if 'RMS' in S:
@@ -286,7 +286,7 @@ def make_queue( args, file_template='/E%d_N%d.h5', replace=False, reread=False):
         maski = maski & ((xg.ravel()**2+yg.ravel()**2) > 4.3478e+05**2)
         # keep everything south of ~73 degrees
         #maski = maski & ((xg.ravel()**2+yg.ravel()**2) < 2.e+06**2)
-        out_template= 'two_mission_dhdt %d %d %d'# -D -r %s -o %s\n       
+        out_template= 'two_mission_dhdt %d %d %d'# -D -r %s -o %s\n
         if args.DEM_edit is not None:
             out_template += ' -D'
         if args.reread_dir is not None:
@@ -300,7 +300,7 @@ def make_queue( args, file_template='/E%d_N%d.h5', replace=False, reread=False):
         out_template +='\n'
         xg=xg.ravel()[maski]
         yg=yg.ravel()[maski]
-        
+
         with open(args.queue_file,'w') as qF:
             for xy in zip(xg, yg):
                 out_file=args.out_dir+file_template % (xy[0]/1000, xy[1]/1000)
@@ -314,11 +314,11 @@ def make_queue( args, file_template='/E%d_N%d.h5', replace=False, reread=False):
                         except (OSError, AssertionError):
                             print('requeue: %s' % out_file)
                             queue_this=True
-                            
+
                 if queue_this:
-                    # -800000 200000 100000 -D -o /Volumes/ice2/ben/scf/intermission_south/V4 -r /Volumes/ice2/ben/scf/intermission_south/                
+                    # -800000 200000 100000 -D -o /Volumes/ice2/ben/scf/intermission_south/V4 -r /Volumes/ice2/ben/scf/intermission_south/
                     qF.write(out_template % (xy[0], xy[1], args.W))
-    return                
+    return
 
 def collect_biases(thedir):
     files=glob(thedir+'/*.h5')
@@ -328,15 +328,15 @@ def collect_biases(thedir):
         worst=np.argmax(np.abs(B['val']))
         vWorst=B['val'][worst]
         if np.abs(vWorst) > 10:
-            TC=(B['rgt'][worst], B['cycle'][worst])        
+            TC=(B['rgt'][worst], B['cycle'][worst])
             if TC not in bias_dict:
                 bias_dict[TC]={'bias':[vWorst], 'file':[file]}
             else:
                 bias_dict[TC]['bias'].append(vWorst)
                 bias_dict[TC]['file'].append(file)
     return bias_dict
-     
-#----------------Command-line interface: 
+
+#----------------Command-line interface:
 def main(argv):
     if isinstance(argv,dict):
         args=argv
@@ -344,7 +344,7 @@ def main(argv):
         # account for a bug in argparse that misinterprets negative agruents
         for i, arg in enumerate(argv):
             if (arg[0] == '-') and arg[1].isdigit(): argv[i] = ' ' + arg
-        
+
         parser=argparse.ArgumentParser(argv)
         parser.add_argument('x0', type=float, default=-1570000)
         parser.add_argument('y0', type=float, default=-220000)
@@ -362,16 +362,16 @@ def main(argv):
         parser.add_argument('-t', '--time_span', type=float, nargs=3, default=[2003, 2020])
         parser.add_argument('-g', '--grid_resolution', type=float, nargs=3, default=[250, 4000, 17])
         args=parser.parse_args()
-    
+
     xy0=(args.x0, args.y0)
-    
+
     if not os.path.isdir(args.out_dir):
         os.mkdir(args.out_dir)
-    
+
     if args.queue_file is not None:
         make_queue(args, replace=False, reread=False)
         return
-        
+
     out_template=args.out_dir+'/E%d_N%d.h5'
     spacing={'z0':args.grid_resolution[0], 'dz':args.grid_resolution[1], 'time':args.grid_resolution[2]}
     sensor_dict={1:'ICESat1', 2:'ICESat2'}
@@ -380,7 +380,7 @@ def main(argv):
         SRS_proj4='+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
     else:
         SRS_proj4='+proj=stere +lat_0=-90 +lat_ts=-71 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
-    
+
     E_RMS0={'d2z0_dx2':200000./3000/3000*args.z0_scale, 'd3z_dx2dt':100./3000/3000*args.dz_scale, 'd2z_dxdt':100/3000*args.dz_scale, 'd2z_dt2':None}
     out_name=out_template %(xy0[0]/1000, xy0[1]/1000)
     print("output file is %s" % out_name)
@@ -389,7 +389,7 @@ def main(argv):
     W={'x':args.W, 'y':args.W,'t':np.diff(args.time_span)}
     ctr={'x':xy0[0], 'y':xy0[1], 't':np.mean(args.time_span)}
     if args.reread_dir is None:
-        data, sensor_dict=read_OIB_data(xy0, W, blockmedian_scale=100., SRS_proj4=SRS_proj4, hemisphere=args.hemisphere) 
+        data, sensor_dict=read_OIB_data(xy0, W, blockmedian_scale=100., SRS_proj4=SRS_proj4, hemisphere=args.hemisphere)
     else:
         data=reread_data_from_files(xy0, args.W, args.reread_dir, template='E%d_N%d.h5')
     print("done reading data")
@@ -404,7 +404,7 @@ def main(argv):
     else:
         S=dict()
         S['grids'], S['m'], S['data'], S['timing'] = twoSlope_fit([ctr['x'], ctr['y']], args.W, spacing, [2003., 2010., 2020.], sensor_dict={'ICESat1':1, 'ICESat2':2}, D=data, E_RMS=E_RMS0)
-        
+
     if out_name is not None:
         save_fit_to_file(S, out_name, sensor_dict=sensor_dict)
     return S, sensor_dict

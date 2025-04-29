@@ -294,7 +294,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     for ff in ['dz','z0']:
         m[ff].assign({'count':G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.\
                         dot(np.ones_like(r)).reshape(grids[ff].shape)})
-        m[ff].count[m[ff].count==0]=np.NaN
+        m[ff].count[m[ff].count==0]=np.nan
         m[ff].assign({'misfit_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_scaled**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
         m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\

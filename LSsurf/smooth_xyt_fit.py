@@ -209,7 +209,7 @@ def parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_dzbar, bi
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
     tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
-    
+
     # generate the full E vector.  E0 appears to be an ndarray,
     E0=np.array(Ip_c.dot(E0)).ravel()
     E['z0']=np.reshape(E0[Gc.TOC['cols']['z0']], grids['z0'].shape)
@@ -224,10 +224,10 @@ def parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_dzbar, bi
         this_name='dzdt_bar_lag%d' % lag
         this_op=lin_op(grids['t'], name=this_name).diff(lag=lag).toCSR().dot(G_dzbar)
         E[this_name]=np.sqrt((this_op.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-         
-    # generate the grid-mean error for zero lag  
+
+    # generate the grid-mean error for zero lag
     E['dz_bar']=np.sqrt((G_dzbar.dot(Ip_c).dot(Rinv)).power(2).sum(axis=1))
-    
+
     E['bias'], E['slope_bias']=parse_biases(E0, bias_model, bias_params)
 
 def parse_model(m, m0, G_data, G_dzbar, TOC, grids, bias_params, bias_model, dzdt_lags=None):
@@ -236,12 +236,12 @@ def parse_model(m, m0, G_data, G_dzbar, TOC, grids, bias_params, bias_model, dzd
     m['z0']=np.reshape(m0[TOC['cols']['z0']], grids['z0'].shape)
     m['dz']=np.reshape(m0[TOC['cols']['dz']], grids['dz'].shape)
     m['count']=np.reshape(np.array(G_data.toCSR().tocsc()[:,TOC['cols']['dz']].sum(axis=0)), grids['dz'].shape)
-    
+
     # calculate height rates
     for lag in dzdt_lags:
         this_name='dzdt_lag%d' % lag
         m[this_name]=lin_op(grids['dz'], name='dzdt', col_N=G_data.col_N).dzdt(lag=lag).grid_prod(m0)
-    
+
     # calculate the grid mean of dz
     m['dz_bar']=G_dzbar.dot(m0)
 
@@ -318,13 +318,13 @@ def smooth_xyt_fit(**kwargs):
     valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
     valid_dz=grids['dz'].validate_pts((args['data'].coords()))
     valid_data=valid_data & valid_dz & valid_z0
-    
+
     if not np.any(valid_data):
         return {'m':m, 'E':E, 'data':None, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # if repeat_res is given, resample the data to include only repeat data (to within a spatial tolerance of repeat_res)
     if args['repeat_res'] is not None:
-        N_before_repeat=np.sum(valid_data)   
+        N_before_repeat=np.sum(valid_data)
         valid_data[valid_data]=valid_data[valid_data] & \
             select_repeat_data(args['data'].copy_subset(valid_data), grids, args['repeat_dt'], args['repeat_res'], reference_time=grids['t'].ctrs[0][args['reference_epoch']])
         if args['VERBOSE']:
@@ -365,7 +365,7 @@ def smooth_xyt_fit(**kwargs):
     if args['bias_params'] is not None:
         data, bias_model=assign_bias_ID(data, args['bias_params'])
         G_bias, Gc_bias, Cvals_bias, bias_model=\
-            param_bias_matrix(data, bias_model, bias_param_name='bias_ID', 
+            param_bias_matrix(data, bias_model, bias_param_name='bias_ID',
                               col_0=grids['dz'].col_N)
         G_data.add(G_bias)
         constraint_op_list.append(Gc_bias)
@@ -403,7 +403,7 @@ def smooth_xyt_fit(**kwargs):
     # put the fit and constraint matrices together
     Gcoo=sp.vstack([G_data.toCSR(), Gc.toCSR()]).tocoo()
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
-     
+
     # build a matrix that takes the average of the center of the delta-z grid
     # this gets used both in the averaging and error-calculation codes
     XR=np.mean(grids['z0'].bds[0])+np.array([-1., 1.])*args['W_ctr']/2.
@@ -449,19 +449,19 @@ def smooth_xyt_fit(**kwargs):
         if args['VERBOSE']:
             print("starting qr solve for iteration %d" % iteration)
         # solve the equations
-        tic=time(); 
-        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))); 
+        tic=time();
+        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs))));
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
         rs_data=(data.z-G_data.toCSR().dot(m0))/data.sigma
         # calculate the robust standard deviation of the scaled residuals for the selected data
         sigma_hat=RDE(rs_data[inTSE])
-        
+
         # select the data that have scaled residuals < 3 *max(1, sigma_hat)
         inTSE_last=inTSE
         inTSE = np.flatnonzero(np.abs(rs_data) < 3.0 * np.maximum(1, sigma_hat))
-        
+
         # quit if the solution is too similar to the previous solution
         if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > 2):
             if args['VERBOSE']:
@@ -474,12 +474,12 @@ def smooth_xyt_fit(**kwargs):
             if inTSE.size == inTSE_last.size and np.all( inTSE_last == inTSE ):
                 if args['VERBOSE']:
                     print("filtering unchanged, exiting after iteration %d" % iteration)
-                break 
+                break
         if iteration >= 2:
             if sigma_hat <= 1:
                 if args['VERBOSE']:
                     print("sigma_hat LT 1, exiting after iteration %d" % iteration)
-                break             
+                break
 
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:
@@ -510,10 +510,7 @@ def smooth_xyt_fit(**kwargs):
         parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, G_dzbar, \
                          bias_model, args['bias_params'], dzdt_lags=args['dzdt_lags'], timing=timing)
 
- 
+
 
     TOC=Gc.TOC
     return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing,'E_RMS':args['E_RMS'], 'dzdt_lags':args['dzdt_lags']}
-
-
-

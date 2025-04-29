@@ -33,7 +33,7 @@ def make_bin_stats(D, xyc, W, bin_width, year_offset, pad_z0=True):
             sensor_stats[year]={}
         bin_z=D.z[rcy_dict[key]]
         z_aug = bin_z.copy()
-        if pad_z0: 
+        if pad_z0:
             for offset in [-1, 0, 1]:
                 this_key = (key[0], key[1], year+offset)
                 if this_key in rcy_dict:
@@ -48,12 +48,12 @@ def make_bin_stats(D, xyc, W, bin_width, year_offset, pad_z0=True):
             # append the scaled differences for the current sensor
             sensor_stats[year][sensor]['devs'] += [np.median(np.abs(bin_z[bin_sensors==sensor]-z0)/zs)]#.tolist()
             # save the bin locations for each sensor
-            sensor_stats[year][sensor]['pts'] += [(key[0], key[1])]    
+            sensor_stats[year][sensor]['pts'] += [(key[0], key[1])]
     return sensor_stats
 
 def select_DEMs(sensor_stats, best_sensors, min_coverage_w, max_overlap_w, bin_width):
     sensors=np.array(list(sensor_stats.keys()))
-    
+
     #zero_count = np.zeros(len(sensors))
     unchecked_sensors = list(sensor_stats.keys())
     for sensor in sensor_stats:
@@ -61,15 +61,15 @@ def select_DEMs(sensor_stats, best_sensors, min_coverage_w, max_overlap_w, bin_w
         bij = bij[:,0]+1j*bij[:,1]
         sensor_stats[sensor]['b_ij'] = bij
         sensor_stats[sensor]['free'] =np.arange(len(bij), dtype=int)
-     
+
     bins=np.array([])
     num_unchecked_sensors = len(unchecked_sensors)
     sensor_total_bins = {sensor: len(sensor_stats[sensor]['devs']) for sensor in unchecked_sensors}
     while num_unchecked_sensors > 0:
         # count the unchecked bins:
         for ii, sensor in enumerate(unchecked_sensors.copy()):
-            
-            
+
+
             sensor_stats[sensor]['free'] = sensor_stats[sensor]['free'][~np.in1d(sensor_stats[sensor]['b_ij'][ sensor_stats[sensor]['free']], bins)]
             if len(sensor_stats[sensor]['free']) < (min_coverage_w/bin_width)**2:
                 unchecked_sensors.remove(sensor)
@@ -77,7 +77,7 @@ def select_DEMs(sensor_stats, best_sensors, min_coverage_w, max_overlap_w, bin_w
         for ii, sensor in enumerate(unchecked_sensors):
             # the score for each sensor is the sum of the inverse differences from the median
             # so being close the median is good, and more points is good
-            new_devs = [ sensor_stats[sensor]['devs'][ii] for ii in sensor_stats[sensor]['free'] ] 
+            new_devs = [ sensor_stats[sensor]['devs'][ii] for ii in sensor_stats[sensor]['free'] ]
             score[ii] = np.sum(1./np.maximum(np.array(new_devs), 0.25))
         #pdb.set_trace()
         # loop over sensors from best to worst
@@ -94,7 +94,7 @@ def select_DEMs(sensor_stats, best_sensors, min_coverage_w, max_overlap_w, bin_w
                 bins = np.concatenate([bins, sensor_stats[sensor]['b_ij'][sensor_stats[sensor]['free']]])
                 break
         #print(unchecked_sensors, flush=True)
-       
+
         num_unchecked_sensors = len(unchecked_sensors)
 
 def subset_DEM_stack(D0, xyc, W, bin_width=400, min_coverage_w=5e3, max_overlap_w=1.e4, year_offset=0 ):
@@ -112,7 +112,7 @@ def subset_DEM_stack(D0, xyc, W, bin_width=400, min_coverage_w=5e3, max_overlap_
 
 
     sensor_stats = make_bin_stats(D, xyc, W, bin_width, year_offset)
-    
+
     best_sensors=[]
     for year in sensor_stats.keys():
         select_DEMs(sensor_stats[year], best_sensors, min_coverage_w, max_overlap_w, bin_width)
@@ -126,6 +126,3 @@ def main():
     D.index(D.sensor>=4)
     xy0=np.array([  480000., -1200000.])
     best_sensors=subset_DEM_stack(D, xy0, 4.e4)
-
-
-    

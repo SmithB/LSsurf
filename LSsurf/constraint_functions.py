@@ -37,14 +37,21 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
         scaling_masks={}
 
     # make the smoothness constraints for z0
-    root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
-    grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
-    grad2_z0.expected=E_RMS['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(mask_scale)
+    if 'd2z0_dx2' in E_RMS:
+        root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
+        grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
+        grad2_z0.expected=E_RMS['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(mask_scale)
+        if 'd2z0_dx2' in scaling_masks:
+            grad2_z0.expected *= grad2_z0.mask_for_ind0(mask=scaling_masks['d2z0_dx2'])
+        constraint_op_list += [grad2_z0]
 
-    constraint_op_list += [grad2_z0]
     if 'dz0_dx' in E_RMS:
         grad_z0=lin_op(grids['z0'], name='grad_z0').grad(DOF='z0')
         grad_z0.expected=E_RMS['dz0_dx']/root_delta_A_z0*grad_z0.mask_for_ind0(mask_scale)
+        for key in ['dz0_dx', 'd2z0_dx2']:
+            if key in scaling_masks:
+                grad_z0.expected *= grad_z0.mask_for_ind0(mask=scaling_masks[key])
+                break
         constraint_op_list += [grad_z0]
 
     if 'z0' in E_RMS and E_RMS['z0'] is not None:
@@ -77,6 +84,14 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
             d2z_dt2.expected *= d2z_dt2.mask_for_ind0(mask=scaling_masks['d2z_dt2'])
         constraint_op_list += [d2z_dt2]
 
+    if 'dz' in scaling_masks:
+        temp = lin_op(grids['dz'], name='dz_zero').one(DOF='dz')
+        e_dz = temp.mask_for_ind0(mask=scaling_masks['dz'])
+        ind = np.flatnonzero((e_dz > 0) & (np.isfinite(e_dz)))
+        mag_dz = lin_op(grids['dz'], name='dz_zero').one(DOF='dz',which_nodes=ind + grids['dz'].col_0)
+        mag_dz.expected=e_dz[ind]
+        constraint_op_list += [mag_dz]
+
     if 'lagrangian_dz' in E_RMS and E_RMS['lagrangian_dz'] is not None:
         root_A_lag=np.sqrt(grids['lagrangian_dz'].delta[0]*grids['lagrangian_dz'].delta[1])
         lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms').one(DOF='lagrangian_dz')
@@ -94,7 +109,7 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
             raise(ValueError(f'found zero value in the expected values for {constraint.name}'))
 
 
-def build_reference_epoch_matrix(G_data, Gc, grids, reference_epoch):
+def build_reference_epoch_matrix(G_data, Gc, grids, reference_epoch, dz_mask=None):
     """
     define the matrix that sets dz[reference_epoch]=0 by removing columns from the solution
 
@@ -117,6 +132,18 @@ def build_reference_epoch_matrix(G_data, Gc, grids, reference_epoch):
     # Identify all of the DOFs that do not include the reference epoch
     cols=np.arange(G_data.col_N, dtype='int')
     include_cols=np.setdiff1d(cols, z02_mask)
+
+    # If a dz_mask is supplied, the nodes for which it specifies exactly zero
+    # dz should be removed from the solution
+    if dz_mask is not None:
+        # find nodes for which the dz mask is zero
+        ee = dz_mask.interp(grids['dz'].ctrs[1][temp_r], grids['dz'].ctrs[0][temp_c])
+        reject_r, reject_c = np.where(ee==0)
+        if len(reject_r) >0:
+            for epoch in range(grids['dz'].shape[2]):
+                rejects = grids['dz'].global_ind(reject_r.ravel(), reject_c.ravel(), epoch+np.zeros_like(reject_c.ravel()))
+                include_cols = np.setdiff1d(cols, rejects)
+
     # Generate a matrix that has diagonal elements corresponding to all DOFs except the reference epoch.
     # Multiplying this by a matrix with columns for all model parameters yeilds a matrix with no columns
     # corresponding to the reference epoch.

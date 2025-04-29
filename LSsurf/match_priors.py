@@ -22,6 +22,9 @@ def match_range(b0, b1):
           for bi, bj in zip(b0, b1) ]
 
 def make_prior_op(grids, dz, src_name, ref_time=0, sigma_scale=1):
+
+    if 't' not in dz.fields:
+        dz.assign(t=dz.time)
     dz=dz[dz.t != ref_time]
     # first matrix interpolates the model to the fit values at the delta-z time
     m1 = lin_op(grids['dz'], name='prior_dz1_'+src_name)\
@@ -94,6 +97,7 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
         bands=np.arange(skip['t']/2, dz.shape[2], dtype='int')
         dz.index(rows, cols, band_ind=bands)
         dz=dz.as_points()
+
         m1 = make_prior_op(grids, dz, src_name, ref_time=ref_time, sigma_scale=sigma_scale)
         m_list += [m1]
 

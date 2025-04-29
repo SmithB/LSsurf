@@ -118,6 +118,9 @@ def setup_grids(args):
         grids['dz'].cell_area=calc_cell_area(grids['dz'])
         if grids['dz'].mask is not None:
             grids['dz'].cell_area *= grids['dz'].mask
+            if hasattr(grids['dz'], 'mask_3d'):
+                print('LSsurf.grid_functions: \n\tMissing feature: cell_area calculation not fully implemented for z0 spacing larger than dz spacing.  Using non-time-varying cell area')
+                grids['dz'].cell_area=np.tile(grids['dz'].cell_area[:,:,None], [1, 1, grids['dz'].mask_3d.shape[2]])
     # last-- multiply the z0 cell area by the z0 mask
     if grids['z0'].mask is not None:
         grids['z0'].cell_area *= grids['z0'].mask
@@ -142,7 +145,7 @@ def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None,
             return cell_area_f.copy()
         except (ValueError, AssertionError):
             pass
-        
+
     # otherwise, need to add up the cell areas within the fine grid
     n_k=(grid_c.delta[0:2]/grid_f.delta[0:2]+1).astype(int)
     if grid_3d:
@@ -272,9 +275,8 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
             else:
                 #2D mask: just use the mask as is
                 op=lin_op(grid, name=this_name, col_N=col_N)
-                row_N=np.max(op.r)
                 op.sum_to_grid3(kernel_N+1, sub0s=sub0s, lag=lag, taper=True)\
-                    .apply_2d_mask(mask=cell_area, row_N=row_N)
+                    .apply_2d_mask(mask=cell_area)
             if cell_area is not None:
                 # the appropriate weight is expected number of nonzero elements
                 # for each nonzero node, times the weight for each time step

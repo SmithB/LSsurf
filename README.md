@@ -1,14 +1,24 @@
 # LSsurf
 Utilities for performing smooth least-squares fits in Python
 
-These scripts include utilities for fitting smooth surfaces to data in a least-squares sense.  They operate on the principle of building a design matrix while keeping track of the relationship between degrees of freedom and columns and between data, constraint parameters, and rows.
+These scripts include utilities for fitting smooth surfaces to data in a least-squares sense.  They operate on the principle of building a design matrix while keeping track of the relationship between degrees of freedom and columns and between data, constraint parameters, and rows.  The functionality is built around my pointCollection library (https://www.github.com/smithb/pointCollection.git) which provides data structures for manipulating point data.
 
-The main functions of the repository are used in LSsurf/smooth_fit.py, which fits smooth gridded surfaces to pointwise input data.  See the smooth_fit_demo.ipynb notebook in the notebooks directory for a demonstration.  The functionality is built around my pointCollection library (https://www.github.com/smithb/pointCollection.git) which provides data structures for manipulating point data.
+## Contents
 
+The _LSsurf_ module provides two main classes:
 
+* _fd_grid_ :
+  A class that defines a finite-difference grid, up to an arbitrary number of dimensions.  Includes relationships between node indices and a global index that spans multiple grids for a multi-resolution least-squares problem
+* _lin\_op_ :
+  A class that defines operators that multiply the values in a _fd__grid_.  Examples include linear interpolations into the grid (2-D and 3-D), averages of grid points, and finite-difference derivatives of grid fields.
+
+  ** _fd\_op : A subclass of _lin\_op_ that constructs _lin\_op_ objects that perform template operations on a neighborhood of points.  Pre-defined subclasses perform derivatives of grid fields.
+
+The main functions of the repository are used in LSsurf/smooth_fit.py, which fits smooth gridded surfaces to pointwise input data.  See the smooth_fit_demo.ipynb notebook in the notebooks directory for a demonstration.
+  
 # Setup
 
-To run the demo notebook, you'll need (do these in order):
+To use the functions in this repo, or to run the demo notebook, you'll need (do these in order):
 
 The suitesparse library:
 

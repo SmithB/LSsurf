@@ -30,7 +30,7 @@ def segDifferenceFilter(D6, tol=2, setValid=True, toNaN=False, subset=False):
     if setValid:
         D6.valid=D6.valid & mask
     if toNaN:
-        D6.h_li[mask==0]=np.NaN
+        D6.h_li[mask==0]=np.nan
     if subset:
         D6.index(np.any(mask==1, axis=1))
 
@@ -38,7 +38,7 @@ def segDifferenceFilter(D6, tol=2, setValid=True, toNaN=False, subset=False):
 
 
 def read_ICESat2(xy0, W, gI_files, sensor=2, SRS_proj4=None, tiled=True, seg_diff_tol=2, blockmedian_scale=None, cplx_accept_threshold=0.):
-    field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'], 
+    field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','atl06_quality_summary','segment_id','sigma_geo_h'],
                 'fit_statistics':['dh_fit_dx', 'dh_fit_dy', 'n_fit_photons','w_surface_window_final','snr_significance'],
                 'geophysical':['tide_ocean'],
                 'ground_track':['x_atc'],
@@ -51,7 +51,7 @@ def read_ICESat2(xy0, W, gI_files, sensor=2, SRS_proj4=None, tiled=True, seg_dif
         fields += ['x','y']
     else:
         fields=field_dict
-    
+
     dx=1.e4
     bds={'x':np.r_[np.floor((xy0[0]-W['x']/2)/dx), np.ceil((xy0[0]+W['x']/2)/dx)+1]*dx, \
          'y':np.r_[np.floor((xy0[1]-W['y']/2)/dx), np.ceil((xy0[1]+W['y']/2)/dx)+1]*dx}
@@ -90,38 +90,38 @@ def read_ICESat2(xy0, W, gI_files, sensor=2, SRS_proj4=None, tiled=True, seg_dif
 
 
         valid=segDifferenceFilter(D, setValid=False, toNaN=False, tol=seg_diff_tol)
-        
+
         D.assign({'quality':D.atl06_quality_summary})
-        
+
         cplx_data=np.in1d(1.e4*np.round((D.x+1j*D.y)/1.e4), cplx_bins)
         if np.any(cplx_data):
             D.quality[cplx_data] = (D.snr_significance[cplx_data] > 0.02) | \
                 (D.n_fit_photons[cplx_data]/D.w_surface_window_final[cplx_data] < 5)
             valid[cplx_data] |= segDifferenceFilter(D, setValid=False, toNaN=False, tol=2*seg_diff_tol)[cplx_data]
-        
-        D.h_li[valid==0] = np.NaN
-        D.h_li[D.quality==1] = np.NaN
+
+        D.h_li[valid==0] = np.nan
+        D.h_li[D.quality==1] = np.nan
         if blockmedian_scale is not None:
             D.blockmedian(blockmedian_scale, field='h_li')
-              
+
         # rename the h_li field to 'z', and set time to the year
         # note that the extra half day is needed because 2018 is in between two leap years
-        # this means that time is years after Y2K + 2000 
+        # this means that time is years after Y2K + 2000
         D.assign({'z': D.h_li, 'time':D.delta_time/24/3600/365.25+2018.+0.5/365.25,
                   'sigma':D.h_li_sigma,'cycle':D.cycle_number})
         # thin to 40 m
-        D.index(np.mod(D.segment_id, 2)==0)  
+        D.index(np.mod(D.segment_id, 2)==0)
         if 'x' not in D.fields:
             D.get_xy(SRS_proj4)
         #D.index(np.isfinite(D.h_li), list_of_fields=['x','y','z','time','year','sigma','sigma_corr','rgt','cycle'])
-                
+
         D.assign({'sensor':np.zeros_like(D.x)+sensor})
         if np.any(np.isfinite(D.dh_fit_dy)):
             dhdy_med=np.nanmedian(D.dh_fit_dy)
             dhdx_med=np.nanmedian(D.dh_fit_dx)
         else:
-            dhdy_med=np.NaN
-            dhdx_med=np.NaN
+            dhdy_med=np.nan
+            dhdx_med=np.nan
         sigma_geo_x=8
         sigma_corr[ind]=np.sqrt(0.03**2+sigma_geo_x**2*(dhdx_med**2+dhdy_med**2))
         if ~np.isfinite(sigma_corr[ind]):
@@ -142,7 +142,7 @@ def main():
 
     plt.scatter(dI.x, dI.y, c=dI.z, linewidth=0); plt.colorbar()
     plt.axis('equal')
-    
-    
+
+
 if __name__=='__main__':
     main()

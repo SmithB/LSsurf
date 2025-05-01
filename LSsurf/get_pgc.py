@@ -55,10 +55,13 @@ def get_meta_from_json(filename, pgc_url):
     pgc_re=re.compile('(SETSM_.*_)\d+m(.*_seg\d+)')
     file_2m='2m'.join(list(pgc_re.search(os.path.basename(filename)).groups()))
     meta_file=os.path.join(os.path.dirname(os.path.dirname(filename)), 'meta', file_2m+'.json')
+    
     if os.path.isfile(meta_file):
         with open(meta_file,'r') as fh:
             return json.load(fh)
     else:
+        if len(pgc_url)==0:
+            raise IndexError('No meta file found, pgc_url must be specified')
         temp=json.loads(
             requests.get(pgc_url+'.json').content)
         if os.path.isdir(os.path.dirname(meta_file)):
@@ -86,8 +89,12 @@ def get_pgc(filename, pgc_url_file, targets=['url']):
         Dict containing filenames for saved files.
 
     """
+
     out={}
-    pgc_url=get_pgc_url(filename, pgc_url_file)
+    if bool({'url','masks','dem','mdf'} & set(targets)):
+        pgc_url=get_pgc_url(filename, pgc_url_file)
+    else:
+        pgc_url=''
     if 'url' in targets:
         out['url']=pgc_url
 
@@ -108,6 +115,9 @@ def get_pgc(filename, pgc_url_file, targets=['url']):
         out['meta'] = download_pgc(filename, pgc_url, extension, file_type='.txt')
 
     if 'meta' in targets:
-        out['meta']=get_meta_from_json(filename, pgc_url)
-
+        try:
+            out['meta']=get_meta_from_json(filename, pgc_url)
+        except IndexError:
+            pgc_url=get_pgc_url(filename, pgc_url_file)
+            out['meta']=get_meta_from_json(filename, pgc_url)
     return out

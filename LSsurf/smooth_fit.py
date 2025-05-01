@@ -113,14 +113,18 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     else:
         N_editable=data.size
 
-    sigma_extra=0
+    sigma_extra=np.zeros_like(data.z)
     N_eq = Gcoo.shape[0]
-    last_iteration = False
+    last_iteration = (args['max_iterations'] <= 1)
     m0 = np.zeros(Ip_c.shape[0])
     for iteration in range(args['max_iterations']):
 
-        # augment the errors on the shelf
         E2_plus=E_all**2
+        if last_iteration and args['sigma_extra_relax']:
+            if args['VERBOSE']:
+                print('smooth_fit.iterate_fit: relaxing errors by sigma_extra')
+            E2_plus[0:G_data.shape[0]] += sigma_extra**2
+
         TCinv=sp.dia_matrix((1./np.sqrt(E2_plus),0), shape=(N_eq, N_eq))
 
         # build the parsing matrix that removes invalid rows
@@ -204,7 +208,8 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
 
     return m0, sigma_extra, in_TSE, rs_data
 
-def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params, dzdt_lags=None, timing={}, error_res_scale=None):
+def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params,
+                          dzdt_lags=None, timing={}, error_res_scale=None):
     tic=time()
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
     z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
@@ -304,11 +309,14 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
             R[eq_type]=np.sum(rc[Gc.TOC['rows'][eq_type]]**2)
             RMS[eq_type]=np.sqrt(np.mean(ru[Gc.TOC['rows'][eq_type]]**2))
     r=(data.z-data.z_est)[data.three_sigma_edit]
-    r_scaled=r/data.sigma[data.three_sigma_edit]
+    if args['sigma_extra_relax']:
+        r_scaled = r/np.sqrt(data.sigma[data.three_sigma_edit]**2 + data.sigma_extra[data.three_sigma_edit]**2)
+    else:
+        r_scaled=r/data.sigma[data.three_sigma_edit]
     for ff in ['dz','z0']:
         m[ff].assign({'count':G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.\
                         dot(np.ones_like(r)).reshape(grids[ff].shape)})
-        m[ff].count[m[ff].count==0]=np.NaN
+        m[ff].count[m[ff].count==0]=np.nan
         m[ff].assign({'misfit_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_scaled**2)\
                                         .reshape(grids[ff].shape)/m[ff].count)})
         m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\
@@ -325,6 +333,7 @@ def smooth_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
     args={'reference_epoch':0,
     'W_ctr':1e4,
+    'return_fit_objects':False,
     'mask_file':None,
     'mask_data':None,
     'mask_update_function':None,
@@ -332,6 +341,7 @@ def smooth_fit(**kwargs):
     'compute_E':False,
     'max_iterations':10,
     'min_iterations':2,
+    'sigma_extra_relax':False,
     'sigma_extra_bin_spacing':None,
     'sigma_extra_max':None,
     'sigma_extra_keys':None,
@@ -444,7 +454,8 @@ def smooth_fit(**kwargs):
             constraint_scaling_masks[key][~np.isfinite(constraint_scaling_masks[key])]=1.
     # define the smoothness constraints
     constraint_op_list=[]
-    print(f"smooth_fit: E_RMS={args['E_RMS']}")
+    if args['VERBOSE']:
+        print(f"smooth_fit: E_RMS={args['E_RMS']}")
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'],
                                  args['mask_scale'],
                                  scaling_masks = constraint_scaling_masks)
@@ -598,6 +609,14 @@ def smooth_fit(**kwargs):
 
     if args['VERBOSE']:
         print("initial: %d:" % G_data.r.max(), flush=True)
+
+    if args['return_fit_objects']:
+        return {'data':data,
+                'G_data':G_data,
+                'Gc':Gc,
+                'grids':grids,
+                'Ed':Ed,
+                'Ec':Ec}
 
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:

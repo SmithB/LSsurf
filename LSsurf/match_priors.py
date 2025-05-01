@@ -184,7 +184,7 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
 
         if not np.any(ii):
             continue
-            
+
         constraint_list += [make_prior_op(grids, dz[ii], src_name,
                                           ref_time=ref_time, sigma_scale=sigma_scale)]
         # make a list of unique constraint points (for debugging)

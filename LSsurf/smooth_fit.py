@@ -6,6 +6,7 @@ Created on Mon Dec  4 15:27:38 2017
 """
 import numpy as np
 import re
+import resource
 from LSsurf.lin_op import lin_op
 import scipy.sparse as sp
 from LSsurf.data_slope_bias import data_slope_bias
@@ -204,15 +205,21 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     return m0, sigma_extra, in_TSE, rs_data
 
 def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params,
-                          dzdt_lags=None, timing={}, error_res_scale=None):
+                          dzdt_lags=None, timing={}, error_res_scale=None, report_memory=False):
     tic=time()
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
+    init_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
+        resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
+    post_rz_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
+        resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    if report_memory:
+        print(f"before rz: {int(init_memory)} k,\n\t after, allocated {int((post_rz_memory- init_memory))}")
     z=z.ravel()
     R=R.tocsr()
     R.sort_indices()
     R.eliminate_zeros()
-    timing['decompose_qz']=time()-tic
+    timing['decompose_qz'] = time() - tic
 
     E0=np.zeros(R.shape[0])
 
@@ -220,9 +227,24 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     # what should the tolerance be?  We will eventually square Rinv and take its
     # row-wise sum.  We care about errors at the cm level, so
     # size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
-    tic=time(); RR, CC, VV, status=inv_tr_upper(R, int(np.prod(R.shape)/4), 1.e-5);
+    tic=time();
+    # nnz_max is the number of nonzero entries in the inverse of R.   We will
+    # initially assume that it is about 1/16 the number of elements in R,
+    # and if this is too few we will repeat the computation with 50% more space
+    # until we get an answer.
+    nnz_max = int(np.prod(R.shape)/4)
+    status = 1
+    while status == 1:
+        RR, CC, VV, status=inv_tr_upper(R, nnz_max, 1.e-5);
+        if status==1:
+            print(f"smooth_fit: calc_and_parse_errors\n\tfailed to propagate errors with nnz_max = {nnz_max}, retrying with nnz_max = {int(nnz_max*1.5)}")
+            nnz_max = int(nnz_max*1.5)
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
+    post_rinv_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
+        resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    if report_memory:
+        print(f"after Rinv allocated {int((post_rinv_memory - post_rz_memory))} k ")
     tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
 
     # generate the full E vector.  E0 appears to be an ndarray,
@@ -425,6 +447,7 @@ def smooth_fit(**kwargs):
 
     # Check if we have any data.  If not, quit
     if data.size==0:
+        print("\tsmooth_fit.py: after masking, no data found")
         return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
 
     # define the interpolation operator, equal to the sum of the dz and z0 operators
@@ -548,6 +571,8 @@ def smooth_fit(**kwargs):
     if args['prior_edge_args'] is not None:
         prior_ops, prior_xy = match_tile_edges(grids, args['reference_epoch'], **args['prior_edge_args'])
         constraint_op_list += prior_ops
+        if args['VERBOSE']:
+            print(f'smooth_fit: found prior constraints in {len(prior_ops)} files')
 
     for op in constraint_op_list:
         if op.prior is None:

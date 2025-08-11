@@ -9,6 +9,8 @@ from LSsurf.lin_op import lin_op
 import pointCollection as pc
 import glob
 import re
+import os
+
 def match_range(b0, b1):
     """
     Find the overlap between two sets of bounds, b0 and b1
@@ -108,7 +110,7 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
                      tile_spacing=4.e4,
                      edge_include=3.e3,
                      group='dz', field_mapping=None, \
-                     sigma_scale=1, sigma_max=None):
+                     sigma_scale=1, sigma_max=None, verbose=False):
     '''
     Make a set of operators to match the current tile to adjacent tiles
 
@@ -135,9 +137,20 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
     if isinstance(prior_dir, (list, tuple)):
         all_files = []
         for thedir in prior_dir:
-            all_files += glob.glob(thedir+'/E*N*.h5')
+            list_file=os.path.join(thedir,'list_of_tiles.txt')
+            if os.path.isfile(list_file):
+                with open(list_file,'r') as fh:
+                    for line in fh:
+                        all_files += [os.path.join(thedir, line.rstrip())]
+            else:
+                all_files += glob.glob(thedir+'/E*N*.h5')
     else:
-        all_files=glob.glob(prior_dir+'/E*N*.h5')
+        list_file=os.path.join(prior_dir,'list_of_tiles.txt')
+        if os.path.isfile(list_file):
+            with open(list_file,'r') as fh:
+                all_files=[os.path.join(prior_dir, line.rstrip()) for line in fh]
+        else:
+            all_files=glob.glob(prior_dir+'/E*N*.h5')
     HX = tile_W/2
     W_overlap = (tile_W-tile_spacing)/2
 
@@ -145,7 +158,7 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
     constraint_xy={}
     for file in all_files:
         try:
-            xyc=tile_re.search(file).groups()
+            xyc=tile_re.search(os.path.basename(file)).groups()
             xyc=(int(xyc[0])*1000., int(xyc[1])*1000.)
         except Exception:
             print(f"couldn't parse filename {file}")
@@ -165,6 +178,11 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
             if field in dz.fields:
                 dz.fields.remove(field)
         dz=dz.as_points()
+
+        if 'sigma_dz' not in dz.fields:
+            print(f"match_priors: no sigma_dz found for {dz.filename}")
+            continue
+
         # select points that are close to the edge of the current tile
         ii  =  (dz.x > xy0[0] + HX - edge_include ) | (dz.x < xy0[0] - HX + edge_include )
         ii |= ((dz.y > xy0[1] + HX - edge_include ) | (dz.y < xy0[1] - HX + edge_include ))
@@ -181,5 +199,6 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
         # make a list of unique constraint points (for debugging)
         u_xy= np.unique(dz.x[ii]+1j*dz.y[ii])
         constraint_xy[file]=(np.real(u_xy), np.imag(u_xy))
-        print(f"sigma_scale={sigma_scale}")
+        if verbose:
+            print(f"sigma_scale={sigma_scale}")
     return constraint_list, constraint_xy

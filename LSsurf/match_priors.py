@@ -172,6 +172,10 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
             continue
 
         dz=pc.grid.data().from_h5(file, group=group, fields=field_mapping)
+        if 'sigma_dz' not in dz.fields:
+            print('match_tile_edges: missing sigma_dz for '+dz.filename)
+            continue
+
         src_name=file
         ref_time = dz.t[ref_epoch]
         for field in ['cell_area','mask']:
@@ -186,14 +190,21 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
         # select points that are close to the edge of the current tile
         ii  =  (dz.x > xy0[0] + HX - edge_include ) | (dz.x < xy0[0] - HX + edge_include )
         ii |= ((dz.y > xy0[1] + HX - edge_include ) | (dz.y < xy0[1] - HX + edge_include ))
+
         # select points that are within the current tile
         ii &= ((dz.x >= xy0[0] - HX) & (dz.x <= xy0[0] + HX))
         ii &= ((dz.y >= xy0[1] - HX) & (dz.y <= xy0[1] + HX))
+
         # select points that aren't too far from the prior tile center in either direction
         ii &= (np.abs(dz.x-xyc[0]) < HX-W_overlap)
         ii &= (np.abs(dz.y-xyc[1]) < HX-W_overlap)
+
+        ii &= grids['z0'].validate_pts((dz.y, dz.x))
+        ii &= grids['dz'].validate_pts((dz.y, dz.x, dz.t))
+
         if not np.any(ii):
             continue
+
         constraint_list += [make_prior_op(grids, dz[ii], src_name,
                                           ref_time=ref_time, sigma_scale=sigma_scale)]
         # make a list of unique constraint points (for debugging)

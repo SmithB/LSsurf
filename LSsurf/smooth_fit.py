@@ -171,6 +171,11 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         if args['DEM_tol'] is not None:
             in_TSE = check_data_against_DEM(in_TSE, data, m0, G_data, args['DEM_tol'])
 
+        if not np.any(in_TSE):
+            if args['VERBOSE']:
+                print("Edited data empty, returning")
+            return m0, sigma_extra, in_TSE, rs_data
+
         # quit if the solution is too similar to the previous solution
         if (np.max(np.abs((m0_last-m0)[Gc.TOC['cols']['dz']])) < args['converge_tol_dz']) and (iteration > args['min_iterations']):
             if args['VERBOSE']:
@@ -468,7 +473,7 @@ def smooth_fit(**kwargs):
             else:
                 constraint_scaling_masks[key] =\
                     this_map.interp(grids['dz'].ctrs[1], grids['dz'].ctrs[0], gridded=True)
-
+            constraint_scaling_masks[key][~np.isfinite(constraint_scaling_masks[key])]=1.
     # define the smoothness constraints
     constraint_op_list=[]
     if args['VERBOSE']:

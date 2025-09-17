@@ -19,7 +19,8 @@ class fd_grid(object):
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
     def __init__(self, bounds, deltas, name='', col_0=0, col_N=None, srs_proj4=None, \
-                 mask_file=None, mask_data=None, mask_interp_threshold=0.5, xform=None):
+                 mask_file=None, mask_data=None, mask_interp_threshold=0.5, xform=None,
+                coords=['y','x','time']):
         """
         Generate new fd_grid object
 
@@ -45,6 +46,8 @@ class fd_grid(object):
             Value used to map mask values to zero or 1. The default is 0.5.
         xform : dict optional
             dict containing fields 'origin' and 'basis_vectors'. The default is None.
+        coords : iterable, optional
+            iterable of coordinate names
 
         Returns
         -------
@@ -62,6 +65,7 @@ class fd_grid(object):
         self.srs_proj4=srs_proj4 # Well Known Text for the spatial reference system of the grid
         self.user_data=dict() # storage space
         self.name=name # name of the degree of freedom specified by the grid
+        self.coords=coords # coordinate names
         self.mask_interp_threshold=mask_interp_threshold
         self.cell_area=None
         if col_N is None:

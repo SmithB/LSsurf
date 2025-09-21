@@ -176,6 +176,9 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
             print('match_tile_edges: missing sigma_dz for '+dz.filename)
             continue
 
+        if 't' not in dz.fields:
+            dz.assign(t=dz.time)
+
         src_name=file
         ref_time = dz.t[ref_epoch]
         for field in ['cell_area','mask']:
@@ -183,7 +186,11 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
                 dz.fields.remove(field)
         dz=dz.as_points()
 
-        if 'sigma_dz' not in dz.fields:
+        # TBD: fix dz.as_points to keep the 't' field
+        if 't' not in dz.fields:
+            dz.assign(t=dz.time)
+
+            if 'sigma_dz' not in dz.fields:
             print(f"match_priors: no sigma_dz found for {dz.filename}")
             continue
 

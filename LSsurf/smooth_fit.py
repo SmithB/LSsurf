@@ -22,7 +22,7 @@ from LSsurf.inv_tr_upper import inv_tr_upper
 from LSsurf.bias_functions import assign_bias_ID, setup_bias_fit, parse_biases
 from LSsurf.grid_functions import setup_grids, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
-                                    validate_by_dz_mask, setup_mask
+                                    validate_by_dz_mask, setup_mask, setup_z0_avg
 from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
@@ -264,9 +264,9 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
 
     # generate the lagged dz errors: [CHECK THIS]
     for key, op in avg_ops.items():
-        E['sigma_'+key] = pc.grid.data().from_dict({'x':op.dst_grid.ctrs[1], \
-                                          'y':op.dst_grid.ctrs[0], \
-                                        'time': op.dst_grid.ctrs[2], \
+        E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr 
+                                           for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
+                                          } | {
                                             'sigma_'+key: op.grid_error(Ip_c.dot(Rinv))})
 
     # generate the grid-mean error for zero lag
@@ -299,10 +299,10 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
 
     # calculate height rates and averages
     for key, op  in averaging_ops.items():
-        m[key] = pc.grid.data().from_dict({'x':op.dst_grid.ctrs[1], \
-                                          'y':op.dst_grid.ctrs[0], \
-                                        'time': op.dst_grid.ctrs[2], \
-                                        'cell_area':op.dst_grid.cell_area,\
+        m[key] = pc.grid.data().from_dict({coord:ctr 
+                                           for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
+                                          } | \
+                                          {'cell_area':op.dst_grid.cell_area,\
                                             key: op.grid_prod(m0)})
 
     # report the parameter biases.  Sorted in order of the parameter bias arguments
@@ -395,6 +395,7 @@ def smooth_fit(**kwargs):
     'sensor_grid_bias_params':None,
     'ancillary_data':None,
     'lagrangian_coords':None,
+    'z0_average_scale':None,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)
@@ -664,7 +665,8 @@ def smooth_fit(**kwargs):
             args['mask_update_function'](grids, m, args)
 
         # setup operators that take averages of the grid at different scales
-        averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+        averaging_ops = setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+        averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
 
         # setup masked averaging ops
         averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
@@ -676,6 +678,7 @@ def smooth_fit(**kwargs):
     else:
         # still need to make the averaging ops
         averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+        averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
         # setup masked averaging ops
         averaging_ops.update(
             setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))

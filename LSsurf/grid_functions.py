@@ -86,8 +86,6 @@ def setup_grids(args):
                             [args['spacing']['lagrangian_dz'], args['spacing']['lagrangian_dz']],
                             name='lagrangian_dz', col_0=grids['z0'].N_nodes+grids['dz'].N_nodes,
                             srs_proj4=args['srs_proj4'])
-        #for grid in [grids['z0'], grids['dz']]:
-        #    grid.col_N = grids['z0'].N_nodes + grids['dz'].N_nodes + grids['lagrangian_dz'].N_nodes
 
     if np.any(grids['dz'].delta[0:2]>=grids['z0'].delta):
         if dz_mask_data is not None and hasattr(dz_mask_data,'t') and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:
@@ -177,6 +175,28 @@ def sym_range(N, ni, offset=0.5):
     out=np.floor(out[np.abs(out-N/2)<= N/2-ni/2]).astype(int)
     return out
 
+def setup_z0_avg(grids, col_N, args):
+    # Build an operator that averages z0 to the scale of dz
+    if 'z0_average_scale' not in args or args['z0_average_scale'] is None:
+        return {}
+    scale = args['z0_average_scale']
+    this_name = 'avg_z0_'+str(int(scale))+'m'
+    kernel_N = np.floor(np.array([scale/dd for dd in grids['z0'].delta[0:2]])).astype(int)
+    if np.any(kernel_N > 1):
+        offset = 0.5
+    else:
+        offset = 0
+    N_grid=[ctrs.size for ctrs in grids['z0'].ctrs]
+    grid_ctr_subs=[np.arange(0, N_grid[dim]+1, kernel_N[dim]) for dim in [0, 1]]
+    sub0s = np.meshgrid(*grid_ctr_subs, indexing='ij')
+    op=lin_op(grids['z0'], name=this_name, col_N=col_N)\
+        .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True, 
+                      valid_equations_only=False)
+    # get the cell area from grids['z0']
+    op.apply_mask(grids['z0'].cell_area)
+    op.normalize_by_unit_product()
+    return {this_name:op}
+
 def setup_averaging_ops(grid, col_N, args, cell_area=None):
     # build operators that take the average of of the delta-z grid at large scales.
     # these get used both in the averaging and error-calculation codes
@@ -204,7 +224,7 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 # no 3-d mask, just use the mask in the grid
                 op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
                 op.dst_grid.cell_area=grid.cell_area
-
+            op.normalize_by_unit_product()
             ops[this_name]=op
 
     # make the averaged ops
@@ -267,11 +287,6 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                                    shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))
                 op.dst_grid.cell_area = temp.dot(np.ones_like(grid.cell_area.ravel()))\
                     .reshape(op.dst_grid.shape)
-                #grid.cell_area.ravel()).reshape(op.dst_grid.shape)
-                #op.dst_grid.cell_area = sum_cell_area(grid, op.dst_grid, \
-                #                                      sub0s=sub0s, \
-                #                                      cell_area_f=cell_area, \
-                #                                      time_step_overlap=2)
             else:
                 #2D mask: just use the mask as is
                 op=lin_op(grid, name=this_name, col_N=col_N)

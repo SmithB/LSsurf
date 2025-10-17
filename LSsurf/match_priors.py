@@ -190,7 +190,7 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
         if 't' not in dz.fields:
             dz.assign(t=dz.time)
 
-            if 'sigma_dz' not in dz.fields:
+        if 'sigma_dz' not in dz.fields:
             print(f"match_priors: no sigma_dz found for {dz.filename}")
             continue
 

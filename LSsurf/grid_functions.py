@@ -120,7 +120,11 @@ def setup_grids(args):
             grids['dz'].cell_area *= grids['dz'].mask
             if hasattr(grids['dz'], 'mask_3d'):
                 print('LSsurf.grid_functions: \n\tMissing feature: cell_area calculation not fully implemented for z0 spacing larger than dz spacing.  Using non-time-varying cell area')
-                grids['dz'].cell_area=np.tile(grids['dz'].cell_area[:,:,None], [1, 1, grids['dz'].mask_3d.shape[2]])
+                grids['dz'].cell_area=np.tile(grids['dz'].cell_area[:,:,None], [1, 1, grids['dz'].shape[2]])
+                grids['dz'].mask_3d = pc.data().from_dict({'x':grids['dz'].ctrs[1],
+                                                           'y':grids['dz'].ctrs[0],
+                                                           't': grids['dz'].ctrs[2],
+                                                           'z': grids['dz'].cell_area > 0})
     # last-- multiply the z0 cell area by the z0 mask
     if grids['z0'].mask is not None:
         grids['z0'].cell_area *= grids['z0'].mask

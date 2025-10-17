@@ -200,6 +200,8 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
         ii &= (np.abs(dz.y-xyc[1]) < HX-W_overlap)
 
         ii &= grids['z0'].validate_pts((dz.y, dz.x))
+        if not hasattr(dz,'t'):
+            dz.t = dz.time
         ii &= grids['dz'].validate_pts((dz.y, dz.x, dz.t))
 
         if not np.any(ii):

@@ -13,5 +13,5 @@ dependencies:
   - matplotlib
   - pip
   - pip:
-     - git+https://github.com/SmithB/PySPQR.git
+     - git+https://github.com/yig/PySPQR.git
      - git+https://github.com/SmithB/pointCollection.git

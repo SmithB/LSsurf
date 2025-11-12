@@ -3,5 +3,6 @@ scipy
 h5py
 gdal
 matplotlib
-sparseqr @ git+https://github.com/yig/PySPQR.git
+geopandas
+sparseqr @ git+https://github.com/SmithB/PySPQR.git
 pointCollection @ git+https://github.com/SmithB/pointCollection.git

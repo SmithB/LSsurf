@@ -19,8 +19,10 @@ class fd_grid(object):
     # and room for additional grids can be allocated by specifying a col_N value
     # that is greater than the number of nodes.
     def __init__(self, bounds, deltas, name='', col_0=0, col_N=None, srs_proj4=None, \
-                 mask_file=None, mask_data=None, mask_interp_threshold=0.5, xform=None,
-                coords=['y','x','time']):
+                 mask_file=None, mask_data=None, mask_interp_threshold=0.5,
+                 erode_source_mask=True,
+                 xform=None,
+                 coords=['y','x','time']):
         """
         Generate new fd_grid object
 
@@ -44,6 +46,8 @@ class fd_grid(object):
             Mask data for array, or file (geotif or hdf5) containing mask data. The default is None.
         mask_interp_threshold : float, optional
             Value used to map mask values to zero or 1. The default is 0.5.
+        erode_source_mask : bool, optional
+            If True, the input mask will be eroded by 1/2 pixel before interpolation.  The default is True
         xform : dict optional
             dict containing fields 'origin' and 'basis_vectors'. The default is None.
         coords : iterable, optional
@@ -239,7 +243,9 @@ class fd_grid(object):
                 self.mask=mask_data.astype(bool)
                 if mask_is_3d:
                     self.mask_3d=mask_data.astype(bool)
-            mask_data=self.make_eroded_source_mask(mask_data, mask_is_3d)
+
+            if self.erode_source_mask:
+                mask_data=self.make_eroded_source_mask(mask_data, mask_is_3d)
 
             if mask_is_3d:
                 self.mask_3d=pc.grid.data().from_dict({'x':self.ctrs[1],
@@ -266,4 +272,4 @@ class fd_grid(object):
                             )
                     self.mask_3d.z[:,:,t_ind]=this_mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > interp_threshold
             else:
-                self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > 0.5
+                self.mask = mask_data.interp(self.ctrs[1], self.ctrs[0], gridded=True) > interp_threshold

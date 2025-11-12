@@ -53,6 +53,7 @@ def setup_grids(args):
         elif len(args['mask_data'].shape)==3:
             z0_mask_data=args['mask_data'].copy()
             valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t <= bds['t'][-1])
+            # z0 mask data is any cell that is valid in any epoch in the time-varying mask data
             z0_mask_data=pc.grid.data().from_dict({
                 'x':args['mask_data'].x,
                 'y':args['mask_data'].y,
@@ -61,11 +62,14 @@ def setup_grids(args):
     else:
         mask_file=args['mask_file']
 
+    if 'erode_source_mask' not in args:
+        args['erode_souce_mask']=True
+
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
                         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
-                        mask_data=z0_mask_data)
+                        mask_data=z0_mask_data, erode_source_mask=args['erode_source_mask'])
 
-    mask_interp_threshold=0.95 # interpolated masks should cover a  minimal area
+    mask_interp_threshold=0.95 # interpolated masks for dz should cover a  minimal area
     dz_mask_data=args['mask_data']
     if isinstance(args['mask_data'], dict):
         dz_mask_data=dz_mask_data['dz']
@@ -74,8 +78,9 @@ def setup_grids(args):
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
                         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
                         name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-                        mask_file=mask_file, mask_data=dz_mask_data,\
-                        mask_interp_threshold = mask_interp_threshold)
+                        mask_file=mask_file, mask_data=dz_mask_data, \
+                        mask_interp_threshold = mask_interp_threshold, \
+                        erode_source_mask=args['erode_source_mask'])
 
     #grids['z0'].col_N=grids['dz'].col_N
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
@@ -194,7 +199,7 @@ def setup_z0_avg(grids, col_N, args):
     grid_ctr_subs=[np.arange(0, N_grid[dim]+1, kernel_N[dim]) for dim in [0, 1]]
     sub0s = np.meshgrid(*grid_ctr_subs, indexing='ij')
     op=lin_op(grids['z0'], name=this_name, col_N=col_N)\
-        .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True, 
+        .sum_to_grid3(kernel_N+1, sub0s=sub0s, taper=True,
                       valid_equations_only=False)
     # get the cell area from grids['z0']
     op.apply_mask(grids['z0'].cell_area)

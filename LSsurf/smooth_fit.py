@@ -264,7 +264,7 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
 
     # generate the lagged dz errors: [CHECK THIS]
     for key, op in avg_ops.items():
-        E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr 
+        E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr
                                            for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
                                           } | {
                                             'sigma_'+key: op.grid_error(Ip_c.dot(Rinv))})
@@ -299,7 +299,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
 
     # calculate height rates and averages
     for key, op  in averaging_ops.items():
-        m[key] = pc.grid.data().from_dict({coord:ctr 
+        m[key] = pc.grid.data().from_dict({coord:ctr
                                            for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
                                           } | \
                                           {'cell_area':op.dst_grid.cell_area,\
@@ -396,6 +396,7 @@ def smooth_fit(**kwargs):
     'ancillary_data':None,
     'lagrangian_coords':None,
     'z0_average_scale':None,
+    'erode_source_mask':True,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)

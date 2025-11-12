@@ -79,6 +79,7 @@ class fd_grid(object):
         self.xform = xform
         self.mask=np.ones(self.shape[0:2], dtype=bool)
         self.mask_3d=None
+        self.erode_source_mask = erode_source_mask
         self.setup_mask(mask_data=mask_data, mask_file=mask_file,
                         interp_threshold=self.mask_interp_threshold)
 

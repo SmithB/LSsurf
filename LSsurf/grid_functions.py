@@ -9,7 +9,6 @@ Created on Thu May 26 13:17:43 2022
 import numpy as np
 from LSsurf.fd_grid import fd_grid
 from LSsurf.lin_op import lin_op
-from LSsurf.unique_by_rows import unique_by_rows
 import scipy.sparse as sp
 import pointCollection as pc
 

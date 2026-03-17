@@ -19,7 +19,10 @@ from LSsurf.RDE import RDE
 import pointCollection as pc
 from scipy.stats import scoreatpercentile
 from LSsurf.inv_tr_upper import inv_tr_upper
-from LSsurf.bias_functions import assign_bias_ID, setup_bias_fit, parse_biases
+from LSsurf.bias_functions import assign_bias_ID,\
+        setup_bias_fit,\
+        setup_data_field_scale_fit,\
+        parse_biases
 from LSsurf.grid_functions import setup_grids, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
                                     validate_by_dz_mask, setup_mask, setup_z0_avg
@@ -27,6 +30,8 @@ from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
 from LSsurf.calc_sigma_extra import calc_sigma_extra, calc_sigma_extra_on_grid
+from threadpoolctl import threadpool_limits
+
 
 def check_data_against_DEM(in_TSE, data, m0, G_data, DEM_tol):
     m1 = m0.copy()
@@ -60,8 +65,6 @@ def print_TOC(G_data, Gc):
             print(f'\t{name}: {len(np.unique(rr))/1000}K')
     print(f'\t\tSensor constraint total: {N_sensor_rows/1000}K')
 
-
-
 def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
 
     if args['bias_nsigma_edit'] is None:
@@ -70,7 +73,7 @@ def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
     # assign the edited field in bias_model['bias_param_dict'] if needed
     if 'edited' not in bias_model['bias_param_dict']:
             bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
-    bias_dict, slope_bias_dict=parse_biases(m0, bias_model, args['bias_params'])
+    bias_dict = parse_biases(m0, bias_model, args['bias_params'])['bias']
     bias_scaled = np.abs(bias_dict['val']) / np.array(bias_dict['expected'])
 
     last_edit = bias_model['bias_param_dict']['edited'].copy()
@@ -119,7 +122,6 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     last_iteration = (args['max_iterations'] <= 1)
     m0 = np.zeros(Ip_c.shape[0])
     for iteration in range(args['max_iterations']):
-
         E2_plus=E_all**2
         if last_iteration and args['sigma_extra_relax']:
             if args['VERBOSE']:
@@ -135,11 +137,12 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                            shape=(Gc.N_eq+in_TSE.sum(), Gcoo.shape[0])).tocsc()
 
         if args['VERBOSE']:
-            print("starting qr solve for iteration %d at %s" % (iteration, ctime()), flush=True)
+            print("starting qr solve for iteration %d at %s with %d threads" % (iteration, ctime(), args['THREADS']), flush=True)
         # solve the equations
         tic=time();
         m0_last=m0
-        m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(), Ip_r.dot(TCinv.dot(rhs))))#, tolerance=-2))
+        with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
+            m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(), Ip_r.dot(TCinv.dot(rhs))))#, tolerance=-2))
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
@@ -210,12 +213,17 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     return m0, sigma_extra, in_TSE, rs_data
 
 def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params,
-                          dzdt_lags=None, timing={}, error_res_scale=None, report_memory=False):
+                          args=None,
+                          dzdt_lags=None,
+                          timing={},
+                          error_res_scale=None,
+                          report_memory=False):
     tic=time()
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
     init_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
+    with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
+        z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
     post_rz_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     if report_memory:
@@ -271,7 +279,10 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
 
     # generate the grid-mean error for zero lag
     if len(bias_model.keys()) >0:
-        E['sigma_bias'], E['sigma_slope_bias'] = parse_biases(E0, bias_model, bias_params)
+        E.update(parse_biases(E0, bias_model,
+                              bias_params,
+                              data_scale_fields = args['data_scale_fields'],
+                              field_prefix='sigma_'))
 
 def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args):
 
@@ -307,16 +318,16 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
 
     # report the parameter biases.  Sorted in order of the parameter bias arguments
     if len(bias_model.keys()) > 0:
-        m['bias'], m['slope_bias'] = parse_biases(m0, bias_model, args['bias_params'], data = data)
-
+        m.update(parse_biases(m0, bias_model,
+                      args['bias_params'],
+                      data = data,
+                      data_scale_fields = args['data_scale_fields']))
     # report the entire model vector, just in case we want it.
     m['all']=m0
 
     # report the geolocation of the output map
     m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
-
     m['sensor_bias_grids']=parse_sensor_bias_grids(m0, G_data, grids)
-
     m['jitter_bias_grids']=parse_jitter_bias_grids(m0, G_data, grids)
 
     # parse the resduals to assess the contributions of the total error:
@@ -382,6 +393,7 @@ def smooth_fit(**kwargs):
     'prior_edge_args':None,
     'avg_scales':[],
     'data_slope_sensors':None,
+    'data_scale_fields':None,
     'E_slope_bias':0.01,
     'E_RMS_d2x_PS_bias':None,
     'E_RMS_PS_bias':None,
@@ -397,6 +409,7 @@ def smooth_fit(**kwargs):
     'lagrangian_coords':None,
     'z0_average_scale':None,
     'erode_source_mask':True,
+    'THREADS':1,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)
@@ -509,9 +522,10 @@ def smooth_fit(**kwargs):
     else:
         bias_model={}
 
+    if 'data_scale_fields' in args and args['data_scale_fields'] is not None:
+        setup_data_field_scale_fit(data, bias_model, G_data, constraint_op_list, args)
+
     # check that the data_slope sensors are in the data that has passed the filtering steps
-
-
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors'])>0:
         args['data_slope_sensors']=args['data_slope_sensors'][np.in1d(args['data_slope_sensors'], data.sensor)]
 
@@ -706,8 +720,10 @@ def smooth_fit(**kwargs):
             print("Starting uncertainty calculation", flush=True)
             tic_error=time()
         calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, averaging_ops, \
-                         bias_model, args['bias_params'], dzdt_lags=args['dzdt_lags'], timing=timing, \
-                             error_res_scale=args['error_res_scale'])
+                         bias_model, args['bias_params'],
+                         dzdt_lags=args['dzdt_lags'],\
+                         args=args, timing=timing, \
+                         error_res_scale=args['error_res_scale'])
         if args['VERBOSE']:
             print("\tUncertainty propagation took %3.2f seconds" % (time()-tic_error), flush=True)
 

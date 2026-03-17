@@ -80,8 +80,30 @@ def assign_bias_ID(data, bias_params=None, bias_name='bias_ID', key_name=None, b
     data.assign({bias_name:bias_ID})
     return data, bias_model
 
+def setup_data_field_scale_fit(data, bias_model, G_data, constraint_ops_list, args):
+
+    # setup a bias fit, scaling parameters (e.g. dhdx) by a per-bias field.
+    # The expected value of scaling coefficient is provided in data.E_scale_{field}
+    # (e.g. E_scale_dhdx)
+    for field in args['data_scale_fields']:
+        this_name = 'scale_'+field
+        bias_model['E_'+this_name]={}
+        expected_mag = getattr(data, 'E_'+this_name)
+        _, id_dict = pc.unique_by_rows(data.bias_ID, return_dict=True)
+        for id, ind in id_dict.items():
+            bias_model['E_'+this_name][int(id[0])] = np.nanmedian(expected_mag[ind])
+        setup_bias_fit(data, bias_model, G_data, constraint_ops_list,
+                       data_field=field,
+                       expected_key = 'E_'+this_name,
+                       op_name=field+'_scale',
+                       bias_param_name='bias_ID')
+
+
 def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
-                       bias_param_name='data_bias', op_name='data_bias'):
+                   data_field=None,
+                   bias_param_name='data_bias',
+                   expected_key='E_bias',
+                   op_name='data_bias'):
     """
         Setup a set of parameters representing the biases of a set of data
 
@@ -99,23 +121,37 @@ def setup_bias_fit(data, bias_model, G_data, constraint_op_list,
     # the new columns are appended to the right of G_data
     col_0=G_data.col_N
     col_N=G_data.col_N+np.max(col)+1
-    # The bias matrix is just a 1 in the column for the bias parameter for each
-    # data value
-    G_bias=lin_op(name=op_name, col_0=col_0, col_N=col_N).data_bias(np.arange(data.size), col=col_0+col)
+    if data_field is None:
+        # if data_field is None, this is just a sinple bias
+        # The bias matrix is just a 1 in the column for the bias parameter for each
+        # data value
+        G_bias=lin_op(name=op_name, col_0=col_0, col_N=col_N).data_bias(np.arange(data.size), col=col_0+col)
+        col_str=''
+    elif isinstance(data_field, str):
+        # if data_field is a string, extract its value from data and use it to
+        # set the value in the lin_op
+        G_bias=lin_op(name=op_name, col_0=col_0, col_N=col_N)\
+            .data_bias(np.arange(data.size), col=col_0+col, val = getattr(data, data_field))
+        col_str='_'+data_field
     # the constraint matrix has a 1 for each column, is zero otherwise
     ii=np.arange(col.max()+1, dtype=int)
     Gc_bias=lin_op(name='constraint_'+op_name, col_0=col_0, col_N=col_N).data_bias(ii,col=col_0+ii)
     for key in bias_model['bias_ID_dict']:
-        bias_model['bias_ID_dict'][key]['col']=col_0+key
-    # the confidence for each bias parameter being zero is in bias_model['E_bias']
-    Gc_bias.expected=np.array([bias_model['E_bias'][ind] for ind in ii])
+        bias_model['bias_ID_dict'][key]['col'+col_str]=col_0+key
+    # the confidence for each bias parameter being zero is in
+    #    by default: bias_model['E_bias']
+    #    otherwise:  bias_model[expected_key]
+    Gc_bias.expected = np.array([bias_model[expected_key][ind] for ind in ii])
     if np.any(Gc_bias.expected==0):
         raise(ValueError('found an zero value in the expected biases'))
     constraint_op_list.append(Gc_bias)
     G_data.add(G_bias)
 
 
-def parse_biases(m, bias_model, bias_params, data=None):
+def parse_biases(m, bias_model, bias_params,
+                 data=None,
+                 field_prefix='',
+                 data_scale_fields=None):
     """
         parse the biases in the ouput model
 
@@ -123,9 +159,10 @@ def parse_biases(m, bias_model, bias_params, data=None):
             m: model vector
             bias_model: the bias model
             bias_params: a list of parameters for which biases are calculated
-        output:
-            b_dict: a dictionary giving the parameters and associated bias values for each ibas ID
-            slope_bias_dict:  a dictionary giving the parameters and assicated biase values for each slope bias ID
+        output: dict
+            entries in dict include:
+                b_dict: a dictionary giving the parameters and associated bias values for each ibas ID
+                slope_bias_dict:  a dictionary giving the parameters and assicated biase values for each slope bias ID
     """
     slope_bias_dict={}
     b_dict={param:list() for param in bias_params+['val','ID','expected']}
@@ -156,9 +193,15 @@ def parse_biases(m, bias_model, bias_params, data=None):
                 b_dict['rms_data_edited'].append(np.nan)
             else:
                 b_dict['rms_data_edited'].append(np.nanstd(r2))
-
+    if data_scale_fields is not None:
+        for field in data_scale_fields:
+            b_dict['val_' + field] = []
+            b_dict['E_scale_' + field] = []
+            for item in bias_model['bias_ID_dict']:
+                b_dict['val_'+field].append(m[bias_model['bias_ID_dict'][item]['col_'+field]])
+                b_dict['E_scale_'+field].append(bias_model['E_scale_'+field][item])
     if 'slope_bias_dict' in bias_model:
         for key in bias_model['slope_bias_dict']:
             slope_bias_dict[key]={'slope_x':m[bias_model['slope_bias_dict'][key][0]], 'slope_y':m[bias_model['slope_bias_dict'][key][1]]}
 
-    return b_dict, slope_bias_dict
+    return { field_prefix + 'bias' : b_dict, field_prefix + 'slope_bias' : slope_bias_dict}

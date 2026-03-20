@@ -298,12 +298,6 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape),\
                                      'cell_area':grids['dz'].cell_area, \
                                      'mask':grids['dz'].mask})
-    if 'lagrangian_dz' in grids:
-        m['lagrangian_dz']=pc.grid.data().from_dict({'x':grids['lagrangian_dz'].ctrs[1],\
-                                         'y':grids['lagrangian_dz'].ctrs[0],\
-                                         'dz': np.reshape(m0[G_data.TOC['cols']['lagrangian_dz']], grids['lagrangian_dz'].shape),\
-                                         'cell_area':grids['lagrangian_dz'].cell_area, \
-                                         'mask':grids['lagrangian_dz'].mask})
 
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
@@ -410,7 +404,6 @@ def smooth_fit(**kwargs):
     'bias_edit_vals':None,
     'sensor_grid_bias_params':None,
     'ancillary_data':None,
-    'lagrangian_coords':None,
     'z0_average_scale':None,
     'erode_source_mask':True,
     'parsing_functions':{},
@@ -478,9 +471,6 @@ def smooth_fit(**kwargs):
     # define the interpolation operator, equal to the sum of the dz and z0 operators
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
     G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))
-    if args['lagrangian_coords'] is not None:
-        G_data.add(lin_op(grids['lagrangian_dz'], name='interp_lagrangian_dz').interp_mtx(
-            [getattr(data, field) for field in args['lagrangian_coords']], bounds_error=False))
 
     if args['constraint_scaling_maps'] is None:
         constraint_scaling_masks=None

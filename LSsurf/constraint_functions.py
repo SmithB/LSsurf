@@ -92,18 +92,6 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
         mag_dz.expected=e_dz[ind]
         constraint_op_list += [mag_dz]
 
-    if 'lagrangian_dz' in E_RMS and E_RMS['lagrangian_dz'] is not None:
-        root_A_lag=np.sqrt(grids['lagrangian_dz'].delta[0]*grids['lagrangian_dz'].delta[1])
-        lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms').one(DOF='lagrangian_dz')
-        lag_dz.expected = np.zeros(lag_dz.N_eq) + E_RMS['lagrangian_dz']/root_A_lag
-        constraint_op_list += [lag_dz]
-
-    if 'lagrangian_dzdx' in E_RMS and E_RMS['lagrangian_dzdx'] is not None:
-        root_A_lag=np.sqrt(grids['lagrangian_dz'].delta[0]*grids['lagrangian_dz'].delta[1])
-        grad_lag_dz=lin_op(grids['lagrangian_dz'], name='lagrangian_rms_grad').grad(DOF='lagrangian_dz')
-        grad_lag_dz.expected = np.zeros(grad_lag_dz.N_eq) + E_RMS['lagrangian_dzdx']/root_A_lag
-        constraint_op_list += [grad_lag_dz]
-
     for constraint in constraint_op_list:
         if np.any(constraint.expected==0):
             raise(ValueError(f'found zero value in the expected values for {constraint.name}'))

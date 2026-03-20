@@ -85,12 +85,6 @@ def setup_grids(args):
     grids['t']=fd_grid([bds['t']], [args['spacing']['dt']], name='t')
     grids['z0'].cell_area=calc_cell_area(grids['z0'])
 
-    if 'lagrangian_coords' in args and args['lagrangian_coords'] is not None:
-        grids['lagrangian_dz']=fd_grid( [bds['y'], bds['x']], \
-                            [args['spacing']['lagrangian_dz'], args['spacing']['lagrangian_dz']],
-                            name='lagrangian_dz', col_0=grids['z0'].N_nodes+grids['dz'].N_nodes,
-                            srs_proj4=args['srs_proj4'])
-
     if np.any(grids['dz'].delta[0:2]>=grids['z0'].delta):
         if dz_mask_data is not None and hasattr(dz_mask_data,'t') and dz_mask_data.t is not None and len(dz_mask_data.t) > 1:
             # we have a time-dependent grid

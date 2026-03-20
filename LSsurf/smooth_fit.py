@@ -327,8 +327,12 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
 
     # report the geolocation of the output map
     m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
-    m['sensor_bias_grids']=parse_sensor_bias_grids(m0, G_data, grids)
-    m['jitter_bias_grids']=parse_jitter_bias_grids(m0, G_data, grids)
+    for group, parsing_functions in args['parsing_functions'].items():
+        # a parsing function should return a dictionary:
+        if group not in m:
+            m[group] = dict()
+        for parsing_function in parsing_functions:
+            m[group].update(parsing_function(m0, G_data, grids))
 
     # parse the resduals to assess the contributions of the total error:
     # Make the C matrix for the constraints
@@ -409,6 +413,7 @@ def smooth_fit(**kwargs):
     'lagrangian_coords':None,
     'z0_average_scale':None,
     'erode_source_mask':True,
+    'parsing_functions':{},
     'THREADS':1,
     'VERBOSE': True,
     'DEBUG': False}
@@ -541,51 +546,29 @@ def smooth_fit(**kwargs):
     if args['sensor_grid_bias_params'] is not None:
         # split grid bias params into jitter and non-jitter
         for params in args['sensor_grid_bias_params']:
-            jitter_params={param.replace('jitter_',''):val for param, val in params.items() if 'jitter' in param}
-            stripe_params={param.replace('stripe_',''):val for param, val in params.items() if 'stripe' in param}
-            non_jitter_params={param:val for param, val in params.items() if 'jitter' not in param and 'stripe' not in param}
-            if len(jitter_params):
+            if 'setup_function' in params:
+                # if there is a function specified in params, run it here.  It
+                # should set up the fitting function (add to G_data) and the
+                # constraint operator(s) (append to constraint_ops_list)
                 try:
-                    jitter_params['filename']=params['filename']
-                    jitter_params['sensor']=params['sensor']
-                    if 'xform' in params:
-                        jitter_params['xform']=params['xform']
-                    if 'sensor' in jitter_params and np.sum(data.sensor==jitter_params['sensor']) < 1:
-                        continue
-                    Gd_jitter, jitter_constraint_list, xform, jitter_grid, xy_atc, poly =\
-                        setup_DEM_jitter_fit(data, col_0=G_data.col_N, **jitter_params)
-                    G_data.add(Gd_jitter)
-                    constraint_op_list += jitter_constraint_list
-                    grids[jitter_grid.name] = jitter_grid
-                except ValueError as e:
-                    print(f"jitter fit failed for {params['filename']}")
-                    raise(e)
-                    pass
-            if len(stripe_params):
-                try:
-                    stripe_params['filename']=params['filename']
-                    stripe_params['sensor']=params['sensor']
-                    if 'xform' in params:
-                        stripe_params['xform']=params['xform']
-                    stripe_params.update({'local_coord_index':1,
-                                          'coord_name':'y_atc',
-                                          'fit_name':'stripe'})
-                    if 'sensor' in stripe_params and np.sum(data.sensor==stripe_params['sensor']) < 1:
-                        continue
-                    Gd_stripe, stripe_constraint_list, xform, stripe_grid, xy_atc, poly =\
-                        setup_DEM_jitter_fit(data, col_0=G_data.col_N,  **stripe_params)
-                    G_data.add(Gd_stripe)
-                    constraint_op_list += stripe_constraint_list
-                    grids[stripe_grid.name] = stripe_grid
-                except ValueError as e:
-                    print(f"stripe fit failed for {params['filename']}")
-                    raise(e)
-                    pass
-            if len(non_jitter_params) and 'spacing' in non_jitter_params:
-                setup_sensor_grid_bias(data, grids, G_data, \
-                                   constraint_op_list, **params)
+                    params['setup_function'](data, grids, G_data, constraint_op_list,
+                                             args=args, **params)
+                except Exception as e:
+                    print(e)
+            else:
+                setup_sensor_grid_bias(data, grids, G_data,
+                                       constraint_op_list, **params)
+            # build a dictionary of parsing functions by output group
+            if 'parsing_function' in params:
+                out_group = '/'
+                if 'out_group' in params:
+                    out_group = params['out_group']
+                if out_group not in args['parsing_functions']:
+                    args['parsing_functions'][out_group] = set()
+                args['parsing_functions'][out_group] \
+                    |= {params['parsing_function']}
 
-        # setup priors
+    # setup priors
     if args['prior_args'] is not None:
         constraint_op_list += match_prior_dz(grids, **args['prior_args'])
 

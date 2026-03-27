@@ -12,7 +12,6 @@ import scipy.sparse as sp
 from LSsurf.data_slope_bias import data_slope_bias
 from LSsurf.setup_sensor_grid_bias import setup_sensor_grid_bias,\
                                             parse_sensor_bias_grids
-from LSsurf.setup_DEM_jitter_fit import setup_DEM_jitter_fit, parse_jitter_bias_grids
 import sparseqr
 from time import time, ctime
 from LSsurf.RDE import RDE
@@ -464,9 +463,9 @@ def smooth_fit(**kwargs):
                 args['sigma_extra_masks'][key]=args['sigma_extra_masks'][key][valid_data==1]
 
     # Check if we have any data.  If not, quit
-    if data.size==0:
+    if data.size == 0:
         print("\tsmooth_fit.py: after masking, no data found")
-        return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, 'TOC':{},'R':{}, 'RMS':{}, 'timing':timing,'E_RMS':args['E_RMS']}
+        return {'m': m, 'E': E, 'data': data, 'grids': grids, 'valid_data': valid_data, 'TOC': {}, 'R': {}, 'RMS': {}, 'timing': timing, 'E_RMS': args['E_RMS']}
 
     # define the interpolation operator, equal to the sum of the dz and z0 operators
     G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
@@ -491,10 +490,6 @@ def smooth_fit(**kwargs):
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'],
                                  args['mask_scale'],
                                  scaling_masks = constraint_scaling_masks)
-
-    ### NB: NEED TO MAKE THIS WORK WITH SETUP_GRID_BIAS
-    #if args['E_RMS_d2x_PS_bias'] is not None:
-    #    setup_PS_bias(data, G_data, constraint_op_list, grids, bds, args)
 
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
@@ -533,6 +528,7 @@ def smooth_fit(**kwargs):
                 G_data.add(G_slope_bias)
                 constraint_op_list.append(Gc_slope_bias)
 
+    # handle arguments related to sensor grid bias params
     if args['sensor_grid_bias_params'] is not None:
         # split grid bias params into jitter and non-jitter
         for params in args['sensor_grid_bias_params']:
@@ -549,14 +545,17 @@ def smooth_fit(**kwargs):
                 setup_sensor_grid_bias(data, grids, G_data,
                                        constraint_op_list, **params)
             # build a dictionary of parsing functions by output group
+            this_parsing_function = parse_sensor_bias_grids
             if 'parsing_function' in params:
-                out_group = '/'
-                if 'out_group' in params:
-                    out_group = params['out_group']
-                if out_group not in args['parsing_functions']:
-                    args['parsing_functions'][out_group] = set()
-                args['parsing_functions'][out_group] \
-                    |= {params['parsing_function']}
+                this_parsing_function = params['parsing_funcion']
+            out_group = '/'
+            if 'out_group' in params:
+                out_group = params['out_group']
+            if out_group not in args['parsing_functions']:
+                args['parsing_functions'][out_group] = set()
+            args['parsing_functions'][out_group] \
+                |= {this_parsing_function}
+
 
     # setup priors
     if args['prior_args'] is not None:

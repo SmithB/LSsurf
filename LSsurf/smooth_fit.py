@@ -547,7 +547,7 @@ def smooth_fit(**kwargs):
             # build a dictionary of parsing functions by output group
             this_parsing_function = parse_sensor_bias_grids
             if 'parsing_function' in params:
-                this_parsing_function = params['parsing_funcion']
+                this_parsing_function = params['parsing_function']
             out_group = '/'
             if 'out_group' in params:
                 out_group = params['out_group']

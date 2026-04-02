@@ -140,8 +140,23 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         # solve the equations
         tic=time();
         m0_last=m0
-        with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
-            m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(), Ip_r.dot(TCinv.dot(rhs))))#, tolerance=-2))
+        # the ordering determines how suitesparse orders the columns when solving
+        # the LS equation.
+        success = False
+        for ordering in [6, 5]:
+            # try METIS (A'*A) (6) first, then AMD (A'*A) second
+            #this_tic=time()
+            try:
+                with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
+                    m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(),
+                                               Ip_r.dot(TCinv.dot(rhs)),
+                                               ordering=ordering))#, tolerance=-2))
+                    success = True
+                    break
+            except Exception as e:
+                print(f"for ordering {ordering}, encountered exception {e}")
+            #print(f"with ordering {ordering}, time = {time()-this_tic}")
+        assert success, "LSsurf.smooth_fit: did not find an ordering that could solve the LS equations"
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
@@ -218,11 +233,23 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                           error_res_scale=None,
                           report_memory=False):
     tic=time()
+    success = False
     # take the QZ transform of Gcoo  # TEST WHETHER rhs can just be a vector of ones
     init_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
-        z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)), Ip_r.dot(TCinv.dot(rhs)))
+    for ordering in [6,5]:
+        try:
+            with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
+                z, R, perm, rank=sparseqr.rz(Ip_r.dot(TCinv.dot(Gcoo)),
+                                             Ip_r.dot(TCinv.dot(rhs)),
+                                             ordering = ordering)
+            success = True
+            break
+        except Exception as e:
+            print(f'for ordering {ordering}, encountered exception {e}')
+    assert success, ("LSsurf.smooth_fit: did not find an ordering that"
+                     " could solve the LS equations for error propagation")
+
     post_rz_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     if report_memory:
@@ -269,7 +296,7 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                                     'time':grids['dz'].ctrs[2],\
                                     'sigma_dz': np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)})
 
-    # generate the lagged dz errors: [CHECK THIS]
+    # generate the lagged dz errors:
     for key, op in avg_ops.items():
         E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr
                                            for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
@@ -282,6 +309,19 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                               bias_params,
                               data_scale_fields = args['data_scale_fields'],
                               field_prefix='sigma_'))
+
+    # apply the parsing functions
+    for group, parsing_functions in args['parsing_functions'].items():
+        # a parsing function should return a dictionary:
+        if group == '/':
+            # save this data to the root
+            for parsing_function in parsing_functions:
+                E.update( parsing_function(E0, G_data, grids, sigma=True))
+            continue
+        elif group not in E:
+            E[group] = dict()
+        for parsing_function in parsing_functions:
+            E[group].update( parsing_function(E0, G_data, grids, sigma=True))
 
 def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args):
 
@@ -322,6 +362,10 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     m['extent']=np.concatenate((grids['z0'].bds[1], grids['z0'].bds[0]))
     for group, parsing_functions in args['parsing_functions'].items():
         # a parsing function should return a dictionary:
+        if group == '/':
+            # save this data to the root
+            for parsing_function in parsing_functions:
+                m.update(parsing_function(m0, G_data, grids))
         if group not in m:
             m[group] = dict()
         for parsing_function in parsing_functions:
@@ -351,6 +395,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                         .reshape(grids[ff].shape)/m[ff].count)})
         m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\
                                          .reshape(grids[ff].shape)/m[ff].count)})
+        # TBD: move to a "post_analysis_function"
         if 'tide' in data.fields:
             r_notide=(data.z+data.tide-data.z_est)[data.three_sigma_edit]
             r_notide_scaled=r_notide/data.sigma[data.three_sigma_edit]

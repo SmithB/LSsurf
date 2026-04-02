@@ -226,7 +226,9 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 # no 3-d mask, just use the mask in the grid
                 op=lin_op(grid, name=this_name, col_N=col_N).dzdt(lag=lag).ravel()
                 op.dst_grid.cell_area=grid.cell_area
-            op.normalize_by_unit_product()
+
+            # There is no need to normalize the operator by unit product because
+            # we have not taken a spatial average
             ops[this_name]=op
 
     # make the averaged ops

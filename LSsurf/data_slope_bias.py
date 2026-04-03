@@ -30,7 +30,7 @@ def data_slope_bias(data,  bias_model, col_0=0, sensors=[], op_name='data_slope'
              E_rms_bias : confidence that predicted slopes are zero
     """
 
-    these_sensors=sensors[np.in1d(sensors, data.sensor)]
+    these_sensors=sensors[np.isin(sensors, data.sensor)]
     if len(these_sensors)==0:
         return None, None, bias_model
 

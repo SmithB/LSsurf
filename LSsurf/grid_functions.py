@@ -223,7 +223,7 @@ def setup_averaging_ops(grid, col_N, args, cell_area=None):
                 # use this matrix to identify the cells that do not have first and last values
                 # within the mask
                 num_cells = temp.dot(grid.mask_3d.z.ravel().astype(float))
-                op.v[np.in1d(op.r, np.flatnonzero(num_cells<2))]=0
+                op.v[np.isin(op.r, np.flatnonzero(num_cells<2))]=0
                 # recreate the matrix with the updated operator:
                 temp=sp.coo_matrix((np.abs(op.v)*0.5*lag*grid.delta[2],(op.r, op.c-grid.col_0)), \
                                    shape=(np.prod(op.dst_grid.shape), grid.cell_area.size))

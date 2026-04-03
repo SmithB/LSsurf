@@ -23,7 +23,7 @@ def op_field_rc(G, row_field, col_fields):
     Returns
     -------
     Boolean
-        True if all entries in G[rows,:] fall in columns designated by 
+        True if all entries in G[rows,:] fall in columns designated by
         col_fields
     """
 
@@ -33,7 +33,7 @@ def op_field_rc(G, row_field, col_fields):
     rows=tr[row_field]
     cols=np.concatenate([tc[field].ravel() for field in col_fields])
     ri, ci = G.toCSR()[rows,:].nonzero()
-    return np.all(np.in1d(np.unique(ci), cols))
+    return np.all(np.isin(np.unique(ci), cols))
 
 def all_row(G):
     """
@@ -51,7 +51,7 @@ def all_row(G):
 
     """
     ri, ci = G.toCSR().nonzero()
-    return np.all(np.in1d(np.arange(G.shape[0]), np.unique(ri)))
+    return np.all(np.isin(np.arange(G.shape[0]), np.unique(ri)))
 
 def all_col(G):
     """
@@ -69,7 +69,7 @@ def all_col(G):
 
     """
     ri, ci = G.toCSR().nonzero()
-    return np.all(np.in1d(np.arange(G.shape[1]), np.unique(ci)))
+    return np.all(np.isin(np.arange(G.shape[1]), np.unique(ci)))
 
 def complete_TOC_col(G, TOC_fields):
     """

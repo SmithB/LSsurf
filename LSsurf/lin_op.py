@@ -102,7 +102,7 @@ class lin_op:
         sub0s=np.meshgrid(*[np.arange(np.maximum(0, -min_delta), np.minimum(Ni, Ni-max_delta)) for Ni, min_delta, max_delta in zip(self.grid.shape, min_deltas, max_deltas)], indexing='ij')
         sub0s=[sub.ravel() for sub in sub0s]
         if which_nodes is not None:
-            temp_mask=np.in1d(self.grid.global_ind(sub0s), which_nodes)
+            temp_mask=np.isin(self.grid.global_ind(sub0s), which_nodes)
             sub0s=[temp[temp_mask] for temp in sub0s]
         self.r, self.c=[np.zeros((len(sub0s[0]), len(delta_subs[0])), dtype=int) for _ in range(2)]
         self.v=np.zeros_like(self.r, dtype=float)

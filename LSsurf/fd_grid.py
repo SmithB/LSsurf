@@ -58,7 +58,7 @@ class fd_grid(object):
         None.
 
         """
-        self.shape=np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)]).astype(int)  # number of nodes in each dimension
+        self.shape=np.round(np.array([((b[1]-b[0])/delta)+1 for b, delta in zip(bounds, deltas)])).astype(int)  # number of nodes in each dimension
         self.ctrs=[b[0]+ delta*np.arange(N) for b, delta, N in zip(bounds, deltas, self.shape)] # node center locations
         self.bds=[np.array([c[0], c[-1]]) for c in self.ctrs]
         self.delta=np.array(deltas)   # node spacing in each dimension

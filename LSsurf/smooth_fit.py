@@ -163,6 +163,8 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         r_data=data.z-G_data.toCSR().dot(m0)
         rs_data=r_data/data.sigma
         if last_iteration:
+            if args['VERBOSE']:
+                print(f'Exiting after iteration {iteration} with sigma_hat = {pc.RDE(rs_data):3.2f}, dt = {time()-tic:2.2f}')
             break
 
         if 'sigma_extra_bin_spacing' not in args or args['sigma_extra_bin_spacing'] is None:
@@ -475,8 +477,8 @@ def smooth_fit(**kwargs):
     grids, bds = setup_grids(args)
 
     # select only the data points that are within the grid bounds
-    valid_z0=grids['z0'].validate_pts((args['data'].coords()[0:2]))
-    valid_dz=grids['dz'].validate_pts((args['data'].coords()))
+    valid_z0=grids['z0'].validate_pts((args['data'].coords(['y','x'])))
+    valid_dz=grids['dz'].validate_pts((args['data'].coords(['y','x','time'])))
     valid_data=valid_data & valid_dz & valid_z0
 
     if not np.any(valid_data):
@@ -513,8 +515,8 @@ def smooth_fit(**kwargs):
         return {'m': m, 'E': E, 'data': data, 'grids': grids, 'valid_data': valid_data, 'TOC': {}, 'R': {}, 'RMS': {}, 'timing': timing, 'E_RMS': args['E_RMS']}
 
     # define the interpolation operator, equal to the sum of the dz and z0 operators
-    G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords()[0:2])
-    G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords()))
+    G_data=lin_op(grids['z0'], name='interp_z').interp_mtx(data.coords(['y','x']))
+    G_data.add(lin_op(grids['dz'], name='interp_dz').interp_mtx(data.coords(['y','x','time'])))
 
     if args['constraint_scaling_maps'] is None:
         constraint_scaling_masks=None

@@ -152,7 +152,10 @@ def sum_cell_area(grid_f, grid_c, cell_area_f=None, return_op=False, sub0s=None,
         n_k =np.array(list(n_k)+[1])
 
     temp_grid = fd_grid([grid_f.bds[ii] for ii in dims], deltas=grid_f.delta[dims])
-    fine_to_coarse = lin_op(grid=temp_grid).sum_to_grid3( n_k, sub0s=sub0s, taper=True, valid_equations_only=False, dims=dims)
+    fine_to_coarse = lin_op(grid=temp_grid).sum_to_grid3( n_k, sub0s=sub0s,
+                                                         taper=True,
+                                                         valid_equations_only=False,
+                                                         dims=dims)
     result=fine_to_coarse.toCSR().dot(cell_area_f.ravel()).reshape(grid_c.shape[dims])
 
     if return_op:
@@ -331,7 +334,7 @@ def setup_mask(data, grids, valid_data, bds, args):
 
     '''
     temp=fd_grid( [bds['y'], bds['x']], [args['spacing']['z0'], args['spacing']['z0']], name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'], mask_data=args['mask_data'])
-    data_mask=lin_op(temp, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().dot(grids['z0'].mask.ravel())
+    data_mask=lin_op(temp, name='interp_z').interp_mtx(data.coords(['y','x'])).toCSR().dot(grids['z0'].mask.ravel())
     data_mask[~np.isfinite(data_mask)]=0
     if np.any(data_mask==0):
         data.index(~(data_mask==0))
@@ -352,15 +355,15 @@ def validate_by_dz_mask(data, grids, valid_data):
     temp_grid.col_0=0
     temp_grid.col_N=np.prod(temp_grid.shape)
     if grids['dz'].mask_3d is not None:
-        data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()).toCSR().\
+        data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords(['y','x','time'])).toCSR().\
             dot(grids['dz'].mask_3d.z.ravel().astype(float))
     else:
         if grids['dz'].mask.ndim==2:
             temp_grid=fd_grid(grids['dz'].bds[0:2], grids['dz'].delta[0:2])
-            data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()[0:2]).toCSR().\
+            data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords(['y','x'])).toCSR().\
                 dot(grids['dz'].mask.ravel().astype(float))
         else:
-            data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords()).toCSR().\
+            data_mask=lin_op(temp_grid, name='interp_z').interp_mtx(data.coords(['y','x','time'])).toCSR().\
                 dot(grids['dz'].mask.ravel().astype(float))
     data_mask[~np.isfinite(data_mask)]=0
     data_mask = data_mask > 0.5

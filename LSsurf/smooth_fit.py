@@ -91,11 +91,11 @@ def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
         #Mark each bad ID as edited (because it will have a bias estimate of zero in subsequent iterations)
         bias_model['bias_param_dict']['edited'][bias_model['bias_param_dict']['ID'].index(ID)]=True
     if len(bad_bias_IDs)>0:
-        print(f"\t have {len(bad_bias_IDs)} bad biases, with {np.sum(np.in1d(data.bias_ID, bad_bias_IDs))} data.")
+        print(f"\t have {len(bad_bias_IDs)} bad biases, with {np.sum(np.isin(data.bias_ID, bad_bias_IDs))} data.")
     else:
         if iteration >= args['bias_nsigma_iteration']:
             print("No bad biases found")
-    in_TSE[np.in1d(data.bias_ID, bad_bias_IDs)]=False
+    in_TSE[np.isin(data.bias_ID, bad_bias_IDs)]=False
 
     return  ~np.all(bias_model['bias_param_dict']['edited'] == last_edit)
 
@@ -502,7 +502,7 @@ def smooth_fit(**kwargs):
         for key, field_vals in args['sigma_extra_keys'].items():
             args['sigma_extra_masks'][key]=np.zeros_like(data.sensor, dtype=bool)
             for field, vals in field_vals.items():
-                args['sigma_extra_masks'][key] |= np.in1d(getattr(data, field), vals)
+                args['sigma_extra_masks'][key] |= np.isin(getattr(data, field), vals)
     else:
         # update the sigma_extra_masks variable to the data mask
         if args['sigma_extra_masks'] is not None:
@@ -555,7 +555,7 @@ def smooth_fit(**kwargs):
             # apply the editing to the three_sigma_edit variable
             bad_IDs=[bias_model['bias_param_dict']['ID'][ii]
                      for ii in np.flatnonzero(bias_model['bias_param_dict']['edited'])]
-            data.three_sigma_edit[np.in1d(data.bias_ID, bad_IDs)]=False
+            data.three_sigma_edit[np.isin(data.bias_ID, bad_IDs)]=False
     else:
         bias_model={}
 
@@ -564,7 +564,7 @@ def smooth_fit(**kwargs):
 
     # check that the data_slope sensors are in the data that has passed the filtering steps
     if args['data_slope_sensors'] is not None and len(args['data_slope_sensors'])>0:
-        args['data_slope_sensors']=args['data_slope_sensors'][np.in1d(args['data_slope_sensors'], data.sensor)]
+        args['data_slope_sensors']=args['data_slope_sensors'][np.isin(args['data_slope_sensors'], data.sensor)]
 
         if len(args['data_slope_sensors']) > 0:
             bias_model['E_slope_bias']=args['E_slope_bias']

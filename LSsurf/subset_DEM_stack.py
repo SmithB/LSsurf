@@ -70,7 +70,7 @@ def select_DEMs(sensor_stats, best_sensors, min_coverage_w, max_overlap_w, bin_w
         for ii, sensor in enumerate(unchecked_sensors.copy()):
 
 
-            sensor_stats[sensor]['free'] = sensor_stats[sensor]['free'][~np.in1d(sensor_stats[sensor]['b_ij'][ sensor_stats[sensor]['free']], bins)]
+            sensor_stats[sensor]['free'] = sensor_stats[sensor]['free'][~np.isin(sensor_stats[sensor]['b_ij'][ sensor_stats[sensor]['free']], bins)]
             if len(sensor_stats[sensor]['free']) < (min_coverage_w/bin_width)**2:
                 unchecked_sensors.remove(sensor)
         score = np.zeros(len(unchecked_sensors))

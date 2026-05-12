@@ -93,7 +93,7 @@ def read_ICESat2(xy0, W, gI_files, sensor=2, SRS_proj4=None, tiled=True, seg_dif
 
         D.assign({'quality':D.atl06_quality_summary})
 
-        cplx_data=np.in1d(1.e4*np.round((D.x+1j*D.y)/1.e4), cplx_bins)
+        cplx_data=np.isin(1.e4*np.round((D.x+1j*D.y)/1.e4), cplx_bins)
         if np.any(cplx_data):
             D.quality[cplx_data] = (D.snr_significance[cplx_data] > 0.02) | \
                 (D.n_fit_photons[cplx_data]/D.w_surface_window_final[cplx_data] < 5)

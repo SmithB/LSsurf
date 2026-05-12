@@ -212,7 +212,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                     print(f'\t sigma_hat for {m_key} : {RDE(r_data[ii]/sigma_aug[ii]):3.4f}', flush=True)
         if iteration > 0  and iteration > args['bias_nsigma_iteration']:
             # Calculate the number of elements that have changed in in_TSE
-            frac_TSE_change = len(np.setxor1d(in_TSE_last, in_TSE))/N_editable
+            frac_TSE_change = np.sum(in_TSE_last != in_TSE)/N_editable
             if frac_TSE_change < args['converge_tol_frac_TSE']:
                 if args['VERBOSE']:
                     print("filtering unchanged with tolerance %3.5f, will exit after iteration %d"
@@ -368,7 +368,8 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
             # save this data to the root
             for parsing_function in parsing_functions:
                 m.update(parsing_function(m0, G_data, grids))
-        if group not in m:
+            continue
+        elif group not in m:
             m[group] = dict()
         for parsing_function in parsing_functions:
             m[group].update(parsing_function(m0, G_data, grids))
@@ -459,7 +460,7 @@ def smooth_fit(**kwargs):
     args.update(kwargs)
     for field in required_fields:
         if field not in kwargs:
-            raise ValueError("%s must be defined", field)
+            raise ValueError("%s must be defined" % field)
     valid_data = np.isfinite(args['data'].z)
 
     if 'sensor' not in args['data'].fields:

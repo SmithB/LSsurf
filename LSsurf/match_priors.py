@@ -76,7 +76,7 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
         if isinstance(datasrc, (str)):
             dz=pc.grid.data().from_h5(datasrc, group=group, fields=field_mapping)
             src_name=datasrc
-        elif isinstance(datasrc, [pc.grid.data]):
+        elif isinstance(datasrc, pc.grid.data):
             dz=datasrc.copy()
             src_name='internal_prior'
         else:

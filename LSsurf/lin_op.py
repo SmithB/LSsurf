@@ -140,7 +140,7 @@ class lin_op:
         # operator can be added to an existing operator.
         if isinstance(op, list) or isinstance(op, tuple):
             for this_op in op:
-                op.add(self, this_op)
+                self.add(this_op)
             return self
         if self.r is not None:
             self.r=np.append(self.r, op.r)
@@ -253,9 +253,8 @@ class lin_op:
         return self
 
     def grad(self, DOF='z'):
-        coeffs=np.array([-1., 1.])/(self.grid.delta[0])
-        dzdx=lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), coeffs)
-        dzdy=lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), coeffs)
+        dzdx=lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), np.array([-1., 1.])/self.grid.delta[1])
+        dzdy=lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), np.array([-1., 1.])/self.grid.delta[0])
         self.vstack((dzdx, dzdy))
         self.__update_size_and_shape__()
         return self
@@ -285,15 +284,14 @@ class lin_op:
 
     def d2z_dt2(self, DOF='dz', t_lag=1):
         coeffs=np.array([-1, 2, -1])/((t_lag*self.grid.delta[2])**2)
-        self=lin_op(self.grid, name='d2'+DOF+'_dt2').diff_op(([0,0,0], [0,0,0], [-t_lag, 0, t_lag]), coeffs)
+        self.diff_op(([0,0,0], [0,0,0], [-t_lag, 0, t_lag]), coeffs)
         self.__update_size_and_shape__()
         return self
 
     def grad2(self, DOF='z'):
-        coeffs=np.array([-1., 2., -1.])/(self.grid.delta[0]**2)
-        d2zdx2=lin_op(self.grid, name='d2'+DOF+'_dx2').diff_op(([0, 0, 0],[-1, 0, 1]), coeffs)
-        d2zdy2=lin_op(self.grid, name='d2'+DOF+'_dy2').diff_op(([-1, 0, 1],[0, 0, 0]), coeffs)
-        d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]**2))
+        d2zdx2=lin_op(self.grid, name='d2'+DOF+'_dx2').diff_op(([0, 0, 0],[-1, 0, 1]), np.array([-1., 2., -1.])/self.grid.delta[1]**2)
+        d2zdy2=lin_op(self.grid, name='d2'+DOF+'_dy2').diff_op(([-1, 0, 1],[0, 0, 0]), np.array([-1., 2., -1.])/self.grid.delta[0]**2)
+        d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]*self.grid.delta[1]))
         self.vstack((d2zdx2, d2zdy2, d2zdxdy))
         self.__update_size_and_shape__()
         return self
@@ -371,7 +369,7 @@ class lin_op:
             self.__update_size_and_shape__()
             self.dst_grid = fd_grid( [[y0, y0], [x0, x0]], \
                                 self.grid.delta, 0,  col_N=0,
-                                srs_proj4=self.grdi.srs_proj4)
+                                srs_proj4=self.grid.srs_proj4)
             self.dst_ind0 = np.array([0]).astype(int)
             return self
         rr, cc, vv = [[],[], []]

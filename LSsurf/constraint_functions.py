@@ -37,8 +37,8 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
         scaling_masks={}
 
     # make the smoothness constraints for z0
+    root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
     if 'd2z0_dx2' in E_RMS:
-        root_delta_A_z0=np.sqrt(np.prod(grids['z0'].delta))
         grad2_z0=lin_op(grids['z0'], name='grad2_z0').grad2(DOF='z0')
         grad2_z0.expected=E_RMS['d2z0_dx2']/root_delta_A_z0*grad2_z0.mask_for_ind0(mask_scale)
         if 'd2z0_dx2' in scaling_masks:

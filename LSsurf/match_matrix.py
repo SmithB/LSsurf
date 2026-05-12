@@ -28,12 +28,12 @@ def match_range(b0, b1):
     return [ (np.maximum(bi[0], bj[0]), np.minimum(bi[1], bj[1]))\
           for bi, bj in zip(b0, b1) ]
 
-def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mapping={'dz':dz,'sigma_dz':sigma_dz}, \
+def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mapping=None, \
                     skip={'xy':1,'t':1}, edge_pad={'xy':0, 't':0}):
     """
     Make an operator to match a saved dz model
 
-    inputs: 
+    inputs:
         str file: h5 file from which to read the data
         float ref_epoch: Time value to which the saved dz model is referenced
         str group: group in the file in which the dz values are saved (default='dz')
@@ -45,16 +45,18 @@ def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mappin
         numpy array d: difference values matching m1
         numpy array sigma_d: uncertainties in the d values
     """
+    if field_mapping is None:
+        field_mapping={'dz':'dz','sigma_dz':'sigma_dz'}
     if file is not None:
         temp=pc.grid.data().from_h5(file, group=group, fields=None)
     else:
         temp=dz.copy()
         
     yc, xc, tc=[np.mean(getattr(temp, field)) for field in ('y','x','t')]
-    yw, xw, tw=[np.diff(getattr(temp, field)[[0, -1]] for field in ('y','x','t'))]
+    yw, xw, tw=[np.diff(getattr(temp, field)[[0, -1]]) for field in ('y','x','t')]
     if file is not None:
         dz=pc.grid.data.from_h5(file, group=group, field_mapping=field_mapping,
-                                  bounds=[xc+np.array([-1, 1])*(xw/2-edge_pad), yc+np.array([-1, 1])*(xw/2-edge_pad), ])
+                                  bounds=[xc+np.array([-1, 1])*(xw/2-edge_pad), yc+np.array([-1, 1])*(yw/2-edge_pad), ])
     else:
         dz=dz.copy().crop(xc+np.array([-1, 1])*(xw/2-edge_pad), yc+np.array([-1, 1])*(xw/2-edge_pad))
 
@@ -68,6 +70,6 @@ def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mappin
     # invert the values of m1 (so that the reference epoch is subtracted)
     m0.v *= -1
     m1.add(m0)
-    d=dz.dz[::skip['xy']][::skip['xy']][::skip['t']]
-    sigma_d=dz.sigma_dz[::skip['xy']][::skip['xy']][::skip['t']]
+    d=dz.dz[::skip['xy'], ::skip['xy'], ::skip['t']]
+    sigma_d=dz.sigma_dz[::skip['xy'], ::skip['xy'], ::skip['t']]
     return m1, d, sigma_d

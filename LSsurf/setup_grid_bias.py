@@ -39,5 +39,5 @@ def setup_grid_bias(data, G_data, constraint_op_list, grids, \
                 ind=np.arange(grid.N_nodes),
                 col=np.arange(grid.col_0, grid.col_N))
         mag_param.expected=expected_rms+np.zeros(mag_param.N_eq)
-        mag_param.expected_val=expected_value+np.zeros(mag_param.N_eq)
+        mag_param.prior=expected_value+np.zeros(mag_param.N_eq)
         constraint_op_list.append(mag_param)

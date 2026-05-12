@@ -28,8 +28,8 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
     Dsub=data[sensor_rows]
     name = f'sensor_{sensor}_bias'
     try:
-        xr=[np.floor(np.min(Dsub.x)/spacing)*spacing, np.ceil(np.max(Dsub.x/spacing))*spacing]
-        yr=[np.floor(np.min(Dsub.y)/spacing)*spacing, np.ceil(np.max(Dsub.y/spacing))*spacing]
+        xr=[np.floor(np.min(Dsub.x)/spacing)*spacing, np.ceil(np.max(Dsub.x)/spacing)*spacing]
+        yr=[np.floor(np.min(Dsub.y)/spacing)*spacing, np.ceil(np.max(Dsub.y)/spacing)*spacing]
         grid=fd_grid([yr, xr], spacing*np.ones(2), name=name)
     except (IndexError, ValueError):
         # grid contains no nodes

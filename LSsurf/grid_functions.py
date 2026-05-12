@@ -62,7 +62,7 @@ def setup_grids(args):
         mask_file=args['mask_file']
 
     if 'erode_source_mask' not in args:
-        args['erode_souce_mask']=True
+        args['erode_source_mask']=True
 
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
                         name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\

@@ -202,21 +202,21 @@ class fd_grid(object):
         mask_delta = [mask_data.y[1]-mask_data.y[0] , mask_data.x[1]-mask_data.x[0]]
         # If this grid's spacing is more than twice that of the mask
         # data, erode the mask by 1/2 pixel before proceeding
-        Nx = int(np.ceil(self.delta[1]/mask_delta[0]/2))
+        Nx = int(np.ceil(self.delta[1]/mask_delta[1]/2))
         Ny = int(np.ceil(self.delta[0]/mask_delta[0]/2))
         if Nx > 1 or Ny > 1:
             from scipy.ndimage import binary_erosion
             local_mask=mask_data.copy()
             if Nx > 1:
                 if mask_is_3d:
-                    local_mask.z = binary_erosion(local_mask.z, np.ones([Nx,1, 1]))
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([1, Nx, 1]))
                 else:
-                    local_mask.z = binary_erosion(local_mask.z, np.ones([Nx,1]))
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([1, Nx]))
             if Ny > 1:
                 if mask_is_3d:
-                    local_mask.z = binary_erosion(local_mask.z, np.ones([1,Ny, 1]))
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([Ny, 1, 1]))
                 else:
-                    local_mask.z = binary_erosion(local_mask.z, np.ones([1, Ny]))
+                    local_mask.z = binary_erosion(local_mask.z, np.ones([Ny, 1]))
         else:
             local_mask=mask_data
         return local_mask
@@ -244,6 +244,7 @@ class fd_grid(object):
                 self.mask=mask_data.astype(bool)
                 if mask_is_3d:
                     self.mask_3d=mask_data.astype(bool)
+                return
 
             if self.erode_source_mask:
                 mask_data=self.make_eroded_source_mask(mask_data, mask_is_3d)

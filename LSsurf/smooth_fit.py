@@ -751,30 +751,3 @@ def smooth_fit(**kwargs):
     return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, \
             'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing,'E_RMS':args['E_RMS'], \
                 'dzdt_lags':args['dzdt_lags']}
-
-def main():
-    W={'x':1.e4,'y':200,'t':2}
-    x=np.arange(-W['x']/2, W['x']/2, 100)
-    D=pc.data().from_dict({'x':x, 'y':np.zeros_like(x),'z':np.sin(2*np.pi*x/2000.),\
-                           'time':np.zeros_like(x)-0.5, 'sigma':np.zeros_like(x)+0.1})
-    D1=D
-    D1.t=np.ones_like(x)
-    data=pc.data().from_list([D, D.copy().assign({'time':np.zeros_like(x)+0.5})])
-    E_d3zdx2dt=0.0001
-    E_d2z0dx2=0.006
-    E_d2zdt2=5
-    E_RMS={'d2z0_dx2':E_d2z0dx2, 'dz0_dx':E_d2z0dx2*1000, 'd3z_dx2dt':E_d3zdx2dt, 'd2z_dxdt':E_d3zdx2dt*1000,  'd2z_dt2':E_d2zdt2}
-
-    ctr={'x':0., 'y':0., 't':0.}
-    SRS_proj4='+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs '
-    spacing={'z0':50, 'dz':50, 'dt':0.25}
-
-    S=smooth_fit(data=data, ctr=ctr, W=W, spacing=spacing, E_RMS=E_RMS,
-                     reference_epoch=2, N_subset=None, compute_E=False,
-                     max_iterations=2,
-                     srs_proj4=SRS_proj4, VERBOSE=True, dzdt_lags=[1])
-    return S
-
-
-if __name__=='__main__':
-    main()

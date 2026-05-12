@@ -38,7 +38,7 @@ def setup_sensor_grid_bias(data, grids, G_data, constraint_op_list,\
     grid.col_0 = G_data.col_N
     grid.col_N = grid.col_0 + grid.N_nodes
     interp_mtx=lin_op(grid=grid, name=name).\
-            interp_mtx(Dsub.coords()[0:2])
+            interp_mtx(Dsub.coords(['y','x']))
     interp_mtx.r=sensor_rows[interp_mtx.r.ravel()].reshape(interp_mtx.r.shape)
     #Build a constraint matrix for the curvature of the bias
     if expected_rms_grad2 is not None:

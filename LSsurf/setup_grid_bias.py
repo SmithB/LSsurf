@@ -22,7 +22,7 @@ def setup_grid_bias(data, G_data, constraint_op_list, grids, \
     grid.col_0 = G_data.col_N
     grid.col_N = grid.col_0 + grid.N_nodes
     interp_mtx=lin_op(grid=grid, name=name).\
-            interp_mtx(data.coords()[0:2])
+            interp_mtx(data.coords(['y','x']))
     # operator values are equal to the interpolator matrix values times the parameter values
     temp = interp_mtx.v.ravel() * getattr(data, param)[interp_mtx.r.ravel().astype(int)]
     interp_mtx.v = temp.reshape(interp_mtx.v.shape)

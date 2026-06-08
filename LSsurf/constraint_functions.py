@@ -12,15 +12,40 @@ Created on Thu May 26 13:34:24 2022
 '''
 
 import numpy as np
-from LSsurf.fd_grid import fd_grid
 from LSsurf.lin_op import lin_op
-from LSsurf.unique_by_rows import unique_by_rows
-import pointCollection as pc
+from LSsurf.grid_functions import calc_cell_area
 import scipy.sparse as sp
 
 
+def area_constraint_scale(op, mask_scale,
+                          downweight_edges=True):
 
-def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, scaling_masks=None):
+
+    '''
+    Calculate a constraint scale based on cell area
+
+    Inputs:
+    op: (LSsurf.lin_op) operator, must have a grid.cell_area
+    mask_scale: (dict) lookup table giving the constraint scale for different mask values
+    downweight_edges: (bool)  if True (default), edges of the mask are downweighted by 1/2, corners by 1/4
+    '''
+    area = op.mask_for_ind0(mask=op.grid.cell_area)
+    cell_wt_grid = np.ones(op.grid.shape[0:2])
+    if downweight_edges:
+        # downweight the edges
+        for ind in [0, -1]:
+            cell_wt_grid[ind, :] /= 2
+            cell_wt_grid[:, ind] /= 2
+    area_ref = op.mask_for_ind0(mask = cell_wt_grid * calc_cell_area(op.grid))
+    area_scale = np.interp(np.minimum(1, area/area_ref),
+                           np.array(list(mask_scale.keys())),
+                           np.array(list(mask_scale.values())))
+    return area_scale
+
+
+def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale,
+                                 scale_dz_constraints_by_area=True,
+                                 scaling_masks=None):
     """
     Setup the smoothness constraint operators for dz and z0
 
@@ -63,14 +88,25 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
     root_delta_V_dz=np.sqrt(np.prod(grids['dz'].delta))
     if 'd3z_dx2dt' in E_RMS and E_RMS['d3z_dx2dt'] is not None:
         grad2_dz=lin_op(grids['dz'], name='grad2_dzdt').grad2_dzdt(DOF='z', t_lag=1)
-        grad2_dz.expected=E_RMS['d3z_dx2dt']/root_delta_V_dz*grad2_dz.mask_for_ind0(mask_scale)
+        if scale_dz_constraints_by_area:
+            grad2_dz.expected=E_RMS['d3z_dx2dt']/root_delta_V_dz \
+                * area_constraint_scale(grad2_dz, mask_scale)
+        else:
+            grad2_dz.expected=E_RMS['d3z_dx2dt']/root_delta_V_dz \
+                * grad2_dz.mask_for_ind0(mask_scale)
         if 'd3z_dx2dt' in scaling_masks:
             grad2_dz.expected *= grad2_dz.mask_for_ind0(mask=scaling_masks['d3z_dx2dt'])
         constraint_op_list += [grad2_dz]
 
     if 'd2z_dxdt' in E_RMS and E_RMS['d2z_dxdt'] is not None:
         grad_dzdt=lin_op(grids['dz'], name='grad_dzdt').grad_dzdt(DOF='z', t_lag=1)
-        grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(mask_scale)
+        if scale_dz_constraints_by_area:
+            grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz \
+                * area_constraint_scale(grad_dzdt, mask_scale)
+        else:
+            grad2_dz.expected=E_RMS['d2z_dxdt']/root_delta_V_dz \
+                * grad_dzdt.mask_for_ind0(mask_scale)
+        #grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(mask_scale)
         for key in ['d2z_dx2dt','d3z_dx2dt']:
             if key in scaling_masks:
                 grad_dzdt.expected *= grad_dzdt.mask_for_ind0(mask=scaling_masks[key])
@@ -79,7 +115,8 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale, s
 
     if 'd2z_dt2' in E_RMS and E_RMS['d2z_dt2'] is not None:
         d2z_dt2=lin_op(grids['dz'], name='d2z_dt2').d2z_dt2(DOF='z')
-        d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + E_RMS['d2z_dt2']/root_delta_V_dz
+        d2z_dt2.expected=np.zeros(d2z_dt2.N_eq) + E_RMS['d2z_dt2']/root_delta_V_dz \
+            * d2z_dt2.mask_for_ind0(mask_scale)
         if 'd2z_dt2' in scaling_masks:
             d2z_dt2.expected *= d2z_dt2.mask_for_ind0(mask=scaling_masks['d2z_dt2'])
         constraint_op_list += [d2z_dt2]

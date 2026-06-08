@@ -253,9 +253,13 @@ class lin_op:
         return self
 
     def grad(self, DOF='z'):
-        dzdx=lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), np.array([-1., 1.])/self.grid.delta[1])
-        dzdy=lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), np.array([-1., 1.])/self.grid.delta[0])
-        self.vstack((dzdx, dzdy))
+        ops=[]
+        ops.append(
+            lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), np.array([-1., 1.])/self.grid.delta[0]))
+        if len(self.grid.delta) > 1:
+            ops.append(
+                lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), np.array([-1., 1.])/self.grid.delta[1]))
+        self.vstack(ops)
         self.__update_size_and_shape__()
         return self
 

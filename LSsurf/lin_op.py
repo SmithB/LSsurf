@@ -295,7 +295,8 @@ class lin_op:
     def grad2(self, DOF='z'):
         d2zdx2=lin_op(self.grid, name='d2'+DOF+'_dx2').diff_op(([0, 0, 0],[-1, 0, 1]), np.array([-1., 2., -1.])/self.grid.delta[1]**2)
         d2zdy2=lin_op(self.grid, name='d2'+DOF+'_dy2').diff_op(([-1, 0, 1],[0, 0, 0]), np.array([-1., 2., -1.])/self.grid.delta[0]**2)
-        d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]*self.grid.delta[1]))
+        # lag-2 cross-derivative term needs a factor of 1/sqrt(2) to achieve the correct frequency response
+        d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 1/np.sqrt(2)*0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]*self.grid.delta[1]))
         self.vstack((d2zdx2, d2zdy2, d2zdxdy))
         self.__update_size_and_shape__()
         return self
@@ -304,7 +305,8 @@ class lin_op:
         coeffs=np.array([-1., 2., -1., 1., -2., 1.])/(t_lag*self.grid.delta[0]**2.*self.grid.delta[2])
         d3zdx2dt=lin_op(self.grid, name='d3'+DOF+'_dx2dt').diff_op(([0, 0, 0, 0, 0, 0],[-1, 0, 1, -1, 0, 1], [-t_lag,-t_lag,-t_lag, 0, 0, 0]), coeffs)
         d3zdy2dt=lin_op(self.grid, name='d3'+DOF+'_dy2dt').diff_op(([-1, 0, 1, -1, 0, 1], [0, 0, 0, 0, 0, 0], [-t_lag, -t_lag, -t_lag, 0, 0, 0]), coeffs)
-        coeffs=np.array([-1., 1., 1., -1., 1., -1., -1., 1.])/(self.grid.delta[0]**2*self.grid.delta[2])
+        # lag-1 cross-derivative term needs a sqrt(2) multiplier to achieve the correct frequency response.
+        coeffs=np.sqrt(2)*np.array([-1., 1., 1., -1., 1., -1., -1., 1.])/(self.grid.delta[0]**2*self.grid.delta[2])
         d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-t_lag, -t_lag, -t_lag, -t_lag, 0, 0, 0, 0]),  coeffs)
         self.vstack((d3zdx2dt, d3zdy2dt, d3zdxdydt))
         self.__update_size_and_shape__()

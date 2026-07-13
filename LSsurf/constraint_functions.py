@@ -104,7 +104,7 @@ def setup_smoothness_constraints(grids, constraint_op_list, E_RMS, mask_scale,
             grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz \
                 * area_constraint_scale(grad_dzdt, mask_scale)
         else:
-            grad2_dz.expected=E_RMS['d2z_dxdt']/root_delta_V_dz \
+            grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz \
                 * grad_dzdt.mask_for_ind0(mask_scale)
         #grad_dzdt.expected=E_RMS['d2z_dxdt']/root_delta_V_dz*grad_dzdt.mask_for_ind0(mask_scale)
         for key in ['d2z_dx2dt','d3z_dx2dt']:

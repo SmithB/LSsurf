@@ -678,6 +678,13 @@ def smooth_fit(**kwargs):
                 'Ed':Ed,
                 'Ec':Ec}
 
+    # setup operators that take averages of the grid at different scales
+    averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+    averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
+    # setup masked averaging ops
+    averaging_ops.update(
+        setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:
         tic_iteration=time()
@@ -698,26 +705,16 @@ def smooth_fit(**kwargs):
         if args['mask_update_function'] is not None:
             parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
             args['mask_update_function'](grids, m, args)
-
-        # setup operators that take averages of the grid at different scales
-        averaging_ops = setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
-        averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
-
-        # setup masked averaging ops
-        averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+            # need to update the averaging operators if the mask has been
+            # updated:
+            averaging_ops = setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+            averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
+            averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 
         parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
         r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
         R['data']=np.sum(((r_data/data.sigma[data.three_sigma_edit==1])**2))
         RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
-    else:
-        # still need to make the averaging ops
-        averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
-        averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
-        # setup masked averaging ops
-        averaging_ops.update(
-            setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
-
 
     # Compute the error in the solution if requested
     if args['compute_E']:

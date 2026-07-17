@@ -668,7 +668,7 @@ def smooth_fit(**kwargs):
         in_TSE=np.ones(G_data.N_eq, dtype=bool)
 
     if args['VERBOSE']:
-        print("initial: %d:" % G_data.r.max(), flush=True)
+        print(f"initial: {G_data.r.max()} data, {np.sum(in_TSE)} valid", flush=True)
 
     if args['return_fit_objects']:
         return {'data':data,

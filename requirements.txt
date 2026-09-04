@@ -4,5 +4,6 @@ h5py
 gdal
 matplotlib
 geopandas
+threadpoolctl
 sparseqr @ git+https://github.com/SmithB/PySPQR.git
 pointCollection @ git+https://github.com/SmithB/pointCollection.git

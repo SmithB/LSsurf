@@ -276,12 +276,14 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     nnz_max = int(np.prod(R.shape)/4)
     status = 1
     while status == 1:
-        RR, CC, VV, status=inv_tr_upper(R, nnz_max, 1.e-5);
+        RR, CC, VV, status=inv_tr_upper(R, nnz_max, 1.e-5, threads=args['THREADS']);
         if status==1:
             print(f"smooth_fit: calc_and_parse_errors\n\tfailed to propagate errors with nnz_max = {nnz_max}, retrying with nnz_max = {int(nnz_max*1.5)}")
             nnz_max = int(nnz_max*1.5)
     # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
     Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
+    # the triplets are copied into Rinv; free them (~16 bytes per entry)
+    del RR, CC, VV
     post_rinv_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     if report_memory:
@@ -298,12 +300,16 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                                     'time':grids['dz'].ctrs[2],\
                                     'sigma_dz': np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)})
 
-    # generate the lagged dz errors:
+    # generate the lagged dz errors.  Ip_c.dot(Rinv) is the same for every
+    # operator: compute it once, not once per operator
+    Ip_c_Rinv = Ip_c.dot(Rinv)
+    del Rinv
     for key, op in avg_ops.items():
         E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr
                                            for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
                                           } | {
-                                            'sigma_'+key: op.grid_error(Ip_c.dot(Rinv))})
+                                            'sigma_'+key: op.grid_error(Ip_c_Rinv)})
+    del Ip_c_Rinv
 
     # generate the grid-mean error for zero lag
     if len(bias_model.keys()) >0:

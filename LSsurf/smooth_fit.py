@@ -18,6 +18,7 @@ from LSsurf.RDE import RDE
 import pointCollection as pc
 from scipy.stats import scoreatpercentile
 from LSsurf.inv_tr_upper import inv_tr_upper
+from LSsurf.ls_solvers import solve_ls
 from LSsurf.bias_functions import assign_bias_ID,\
         setup_bias_fit,\
         setup_data_field_scale_fit,\
@@ -140,23 +141,12 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         # solve the equations
         tic=time();
         m0_last=m0
-        # the ordering determines how suitesparse orders the columns when solving
-        # the LS equation.
-        success = False
-        for ordering in [6, 5]:
-            # try METIS (A'*A) (6) first, then AMD (A'*A) second
-            #this_tic=time()
-            try:
-                with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
-                    m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(),
-                                               Ip_r.dot(TCinv.dot(rhs)),
-                                               ordering=ordering))#, tolerance=-2))
-                    success = True
-                    break
-            except Exception as e:
-                print(f"for ordering {ordering}, encountered exception {e}")
-            #print(f"with ordering {ordering}, time = {time()-this_tic}")
-        assert success, "LSsurf.smooth_fit: did not find an ordering that could solve the LS equations"
+        # args['solver']: 'spqr' (QR, METIS then AMD ordering) or the opt-in
+        # 'cholmod' (normal equations + refinement); see LSsurf/ls_solvers.py
+        m0=Ip_c.dot(solve_ls(Ip_r.dot(TCinv.dot(Gcoo)),
+                             Ip_r.dot(TCinv.dot(rhs)),
+                             threads=args['THREADS'], solver=args['solver'],
+                             verbose=args['VERBOSE']))
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
@@ -461,6 +451,7 @@ def smooth_fit(**kwargs):
     'erode_source_mask':True,
     'parsing_functions':{},
     'THREADS':1,
+    'solver':'spqr',
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)

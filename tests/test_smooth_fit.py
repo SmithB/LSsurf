@@ -4,7 +4,7 @@ import pointCollection as pc
 import os
 
 
-def run_fit():
+def run_fit(**kwargs):
 
     # define the domain's width in x, y, and time
     W_d = {'x': 1.e4, 'y': 400, 't': 2}
@@ -44,7 +44,8 @@ def run_fit():
                    reference_epoch=4,  
                    compute_E=True,
                    max_iterations=1, 
-                   dzdt_lags=[1])
+                   dzdt_lags=[1],
+                   **kwargs)
     return S
 
 

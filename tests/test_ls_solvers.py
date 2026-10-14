@@ -33,8 +33,9 @@ def rel_diff(x, y):
     return np.linalg.norm(x - y) / np.linalg.norm(y)
 
 
+@pytest.mark.parametrize('scale_columns', [False, True])
 @pytest.mark.parametrize('case', ['scaled', 'eps1e-4', 'eps1e-5'])
-def test_cholmod_matches_spqr_without_fallback(case, capsys):
+def test_cholmod_matches_spqr_without_fallback(case, scale_columns, capsys):
     # the eps cases are ill conditioned enough that the UNREFINED normal
     # equations miss 1e-9 (3.5e-8 and 9.3e-6 measured): refinement has to work
     if case == 'scaled':
@@ -42,7 +43,7 @@ def test_cholmod_matches_spqr_without_fallback(case, capsys):
     else:
         A, b = collinear_ls(float(case[3:]))
     x_qr = solve_spqr(A, b)
-    x_ch = solve_ls(A, b, solver='cholmod')
+    x_ch = solve_ls(A, b, solver='cholmod', scale_columns=scale_columns)
     assert 'FALLING BACK' not in capsys.readouterr().out
     assert rel_diff(x_ch, x_qr) < 1e-9
 
@@ -58,6 +59,44 @@ def test_rank_deficient_falls_back_to_spqr(capsys):
     A, b = random_ls()
     A = sp.hstack([A, A[:, :1]]).tocsc()    # a repeated column
     x = solve_ls(A, b, solver='cholmod')
+    assert 'FALLING BACK TO SPQR' in capsys.readouterr().out
+    np.testing.assert_array_equal(x, solve_spqr(A, b))
+
+
+def test_column_scaling_accepts_badly_scaled_columns(capsys):
+    # columns over 8 decades: unscaled rcond 1.2e-16 falls back, though the
+    # columns are independent; scaled rcond is 0.66 and the solve matches SPQR
+    A, b = random_ls(scale_decades=8)
+    solve_ls(A, b, solver='cholmod')
+    assert 'FALLING BACK TO SPQR' in capsys.readouterr().out
+    x_ch = solve_ls(A, b, solver='cholmod', scale_columns=True)
+    assert 'FALLING BACK' not in capsys.readouterr().out
+    assert rel_diff(x_ch, solve_spqr(A, b)) < 1e-9
+
+
+def test_column_scaling_keeps_collinearity_in_rcond():
+    # scaling removes the column-norm spread from rcond, not near-dependence:
+    # collinear columns (eps=1e-6) give rcond ~3e-13 either way
+    A, b = collinear_ls(1e-6)
+    _, info = ls_solvers.solve_cholmod(A, b)
+    _, info_s = ls_solvers.solve_cholmod(A, b, scale_columns=True)
+    assert info_s['rcond'] < 1e-12
+    assert 0.1 < info_s['rcond'] / info['rcond'] < 10
+
+
+@pytest.mark.parametrize('case', ['repeated', 'repeated_scaled', 'zero'])
+def test_column_scaling_still_falls_back_when_rank_deficient(case, capsys):
+    if case == 'repeated':
+        A, b = random_ls()
+        A = sp.hstack([A, A[:, :1]]).tocsc()
+    elif case == 'repeated_scaled':
+        # repeat the largest of 5 decades of columns
+        A, b = random_ls(scale_decades=5)
+        A = sp.hstack([A, A[:, -1:]]).tocsc()
+    else:
+        A, b = random_ls()
+        A = sp.hstack([A, sp.csc_matrix((A.shape[0], 1))]).tocsc()
+    x = solve_ls(A, b, solver='cholmod', scale_columns=True)
     assert 'FALLING BACK TO SPQR' in capsys.readouterr().out
     np.testing.assert_array_equal(x, solve_spqr(A, b))
 
@@ -85,10 +124,11 @@ def test_spqr_is_the_default_and_unchanged():
     np.testing.assert_array_equal(solve_ls(A, b), x_ref)
 
 
-def test_smooth_fit_cholmod_matches_spqr():
+@pytest.mark.parametrize('scale_columns', [False, True])
+def test_smooth_fit_cholmod_matches_spqr(scale_columns):
     from test_smooth_fit import run_fit
     S_qr = run_fit(solver='spqr')
-    S_ch = run_fit(solver='cholmod')
+    S_ch = run_fit(solver='cholmod', cholmod_scale_columns=scale_columns)
     for group in ['z0', 'dz']:
         for field in S_qr['m'][group].fields:
             a = getattr(S_qr['m'][group], field)

@@ -142,11 +142,13 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         tic=time();
         m0_last=m0
         # args['solver']: 'spqr' (QR, METIS then AMD ordering) or the opt-in
-        # 'cholmod' (normal equations + refinement); see LSsurf/ls_solvers.py
+        # 'cholmod' (normal equations + refinement); see LSsurf/ls_solvers.py.
+        # args['cholmod_scale_columns'] factors the unit-diagonal D A'A D
         m0=Ip_c.dot(solve_ls(Ip_r.dot(TCinv.dot(Gcoo)),
                              Ip_r.dot(TCinv.dot(rhs)),
                              threads=args['THREADS'], solver=args['solver'],
-                             verbose=args['VERBOSE']))
+                             verbose=args['VERBOSE'],
+                             scale_columns=args['cholmod_scale_columns']))
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
@@ -452,6 +454,7 @@ def smooth_fit(**kwargs):
     'parsing_functions':{},
     'THREADS':1,
     'solver':'spqr',
+    'cholmod_scale_columns':False,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)

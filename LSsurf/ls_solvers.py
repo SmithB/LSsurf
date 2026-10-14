@@ -17,6 +17,16 @@ normal matrix is not numerically positive definite), when its condition
 estimate says A'A is numerically singular (rcond < RCOND_MIN), or when
 refinement does not converge.  A missing scikit-sparse is an error, not a fallback: whoever
 asked for cholmod should find out it is not installed.
+
+scale_columns=True (opt-in, cholmod only) factors D A'A D instead of A'A, with
+D = diag(1/||a_j||), so the normal matrix has a unit diagonal, then maps the
+solution back (x = D y).  The solution is the same, and the factorization has
+the same sparsity and cost, but CHOLMOD's rcond, (min diag(L)/max diag(L))**2,
+stops measuring the spread of column norms (units and weights) and measures
+near-dependence between columns: on the north-Greenland E210_N-680 fits the
+unscaled rcond is 3e-16 to 1.4e-14, mostly below RCOND_MIN, though the solution
+matches SPQR to 1e-8 m; scaled, it is 1e-7 to 2e-5.  Scaling adds ~1% to the
+solve.  A repeated column still gives a singular scaled matrix.
 """
 import warnings
 from time import time
@@ -49,23 +59,42 @@ def solve_spqr(A, b, threads=1):
     raise AssertionError("LSsurf.smooth_fit: did not find an ordering that could solve the LS equations")
 
 
-def solve_cholmod(A, b, threads=1, verbose=True):
+def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=False):
     """
     Normal-equation solve with refinement.  Returns (x, info); x is None if
     the solve should fall back to SPQR, and info['reason'] says why.
+    scale_columns=True factors the unit-diagonal D A'A D; see the module docstring.
     """
     try:
         from sksparse.cholmod import CholeskyFactor, CholmodError
     except ImportError as e:
         raise ImportError("solver='cholmod' needs scikit-sparse >= 0.5 "
                           "(conda install -c conda-forge scikit-sparse)") from e
-    info = {}
+    info = {'scaled': scale_columns}
     with threadpool_limits(limits={'openmp': threads, 'blas': threads}):
         tic = time()
         A = A.tocsc()
         AT = A.T.tocsc()
         N = (AT @ A).tocsc()
         info['AtA_s'] = time() - tic
+        d = None
+        if scale_columns:
+            tic = time()
+            # d_j = 1/||a_j||.  An all-zero column keeps d_j = 1: its zero
+            # diagonal still makes the factorization fail, as it does unscaled
+            N_jj = N.diagonal()
+            d = 1. / np.sqrt(np.where(N_jj > 0, N_jj, 1.))
+            # N_ij * d_i * d_j on the stored values (N is CSC: indices are
+            # rows): 0.1 s on E210_N-680, against 0.6 s for D @ N @ D (most of
+            # that sorting the indices, which CHOLMOD otherwise does itself)
+            N.data *= d[N.indices]
+            N.data *= np.repeat(d, np.diff(N.indptr))
+            info['scale_s'] = time() - tic
+
+        def solve_N(r):
+            # (A'A)^-1 r, through the factor of D A'A D when scaling
+            return F.solve(r) if d is None else d * F.solve(d * r)
+
         tic = time()
         try:
             # a fresh factor every call: one reused factor was once 40x slower
@@ -76,9 +105,10 @@ def solve_cholmod(A, b, threads=1, verbose=True):
                 F.factorize(N)
                 info['rcond'] = F.rcond
                 if not info['rcond'] >= RCOND_MIN:
-                    info['reason'] = f"A'A numerically singular (rcond {info['rcond']:.1e} < {RCOND_MIN:.0e})"
+                    which = "scaled A'A" if scale_columns else "A'A"
+                    info['reason'] = f"{which} numerically singular (rcond {info['rcond']:.1e} < {RCOND_MIN:.0e})"
                     return None, info
-                x = F.solve(AT @ b)
+                x = solve_N(AT @ b)
         except CholmodError as e:
             info['reason'] = f'{type(e).__name__}: {e}'
             return None, info
@@ -89,7 +119,7 @@ def solve_cholmod(A, b, threads=1, verbose=True):
         for _ in range(MAX_REFINE):
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-                dx = F.solve(AT @ (b - A @ x))
+                dx = solve_N(AT @ (b - A @ x))
             x = x + dx
             rel = np.linalg.norm(dx) / x_norm if x_norm > 0 else np.linalg.norm(dx)
             info['refine'].append(rel)
@@ -102,17 +132,22 @@ def solve_cholmod(A, b, threads=1, verbose=True):
     return x, info
 
 
-def solve_ls(A, b, threads=1, solver='spqr', verbose=True):
-    """min ||A x - b|| with the named solver; see the module docstring."""
+def solve_ls(A, b, threads=1, solver='spqr', verbose=True, scale_columns=False):
+    """
+    min ||A x - b|| with the named solver; see the module docstring.
+    scale_columns applies to the cholmod solve only (not to spqr or its fallback).
+    """
     if solver == 'spqr':
         return solve_spqr(A, b, threads)
     if solver != 'cholmod':
         raise ValueError(f"solver must be 'spqr' or 'cholmod', got {solver!r}")
-    x, info = solve_cholmod(A, b, threads, verbose=verbose)
+    x, info = solve_cholmod(A, b, threads, verbose=verbose, scale_columns=scale_columns)
     if verbose:
         steps = ', '.join(f'{r:.1e}' for r in info.get('refine', []))
-        print(f"\tcholmod: A'A {info.get('AtA_s', 0):.1f} s, factor+solve {info.get('factor_s', 0):.1f} s, "
-              f"rcond {info.get('rcond', float('nan')):.1e}, refinement |dx|/|x|: [{steps}] "
+        scaling = f"column scaling {info['scale_s']:.2f} s, " if 'scale_s' in info else ''
+        rcond_label = 'rcond (scaled)' if info['scaled'] else 'rcond'
+        print(f"\tcholmod: A'A {info.get('AtA_s', 0):.1f} s, {scaling}factor+solve {info.get('factor_s', 0):.1f} s, "
+              f"{rcond_label} {info.get('rcond', float('nan')):.1e}, refinement |dx|/|x|: [{steps}] "
               f"in {info.get('refine_s', 0):.1f} s", flush=True)
     if x is None:
         print(f"\tcholmod: FALLING BACK TO SPQR -- {info['reason']}", flush=True)

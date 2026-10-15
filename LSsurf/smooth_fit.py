@@ -121,6 +121,9 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     N_eq = Gcoo.shape[0]
     last_iteration = (args['max_iterations'] <= 1)
     m0 = np.zeros(Ip_c.shape[0])
+    # args['cholmod_cache_ordering']: the iterations change only the rows and
+    # their weights, so the first iteration's METIS ordering is reused
+    ordering_cache = {} if args['cholmod_cache_ordering'] else None
     for iteration in range(args['max_iterations']):
         E2_plus=E_all**2
         if last_iteration and args['sigma_extra_relax']:
@@ -148,7 +151,8 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                              Ip_r.dot(TCinv.dot(rhs)),
                              threads=args['THREADS'], solver=args['solver'],
                              verbose=args['VERBOSE'],
-                             scale_columns=args['cholmod_scale_columns']))
+                             scale_columns=args['cholmod_scale_columns'],
+                             ordering_cache=ordering_cache))
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
@@ -455,6 +459,7 @@ def smooth_fit(**kwargs):
     'THREADS':1,
     'solver':'spqr',
     'cholmod_scale_columns':False,
+    'cholmod_cache_ordering':False,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)

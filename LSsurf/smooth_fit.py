@@ -202,10 +202,13 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
             if sigma_extra_masks is None:
                 print(f'\t median(sigma_extra)={np.median(sigma_extra):3.4f}')
             else:
+                # skip masks that select no data (e.g. no DEMs in the tile)
                 for m_key, ii in sigma_extra_masks.items():
-                    print(f'\t sigma_extra for {m_key} : {np.median(sigma_extra[ii]):3.4f}', flush=True)
+                    if np.any(ii):
+                        print(f'\t sigma_extra for {m_key} : {np.median(sigma_extra[ii]):3.4f}', flush=True)
                 for m_key, ii in sigma_extra_masks.items():
-                    print(f'\t sigma_hat for {m_key} : {RDE(r_data[ii]/sigma_aug[ii]):3.4f}', flush=True)
+                    if np.any(ii):
+                        print(f'\t sigma_hat for {m_key} : {RDE(r_data[ii]/sigma_aug[ii]):3.4f}', flush=True)
         if iteration > 0  and iteration > args['bias_nsigma_iteration']:
             # Calculate the number of elements that have changed in in_TSE
             frac_TSE_change = np.sum(in_TSE_last != in_TSE)/N_editable

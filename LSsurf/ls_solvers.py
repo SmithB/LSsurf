@@ -73,12 +73,18 @@ def factor_nnz(N):
     nnz of the Cholesky factor of N in its given order, from CHOLMOD's
     symbolic factorization.
 
-    WORKAROUND for scikit-sparse 0.5.0: reading CholeskyFactor.nnz (or
-    .colcount) leaks a reference to the factor, so it is never freed.  With
-    ordering_cache on, solve_cholmod read F.nnz on every call, and each call
-    leaked its whole factor (8.7 GB per iteration on the AA tile E-560_N-1240,
-    37 GB after 4 iterations).  symbfact gives the same count, without a
-    factor.
+    WORKAROUND for scikit-sparse 0.5.0
+    (https://github.com/scikit-sparse/scikit-sparse/issues/154, open as of
+    2026-10-23): CholeskyFactor caches arrays that are views of itself, a
+    reference cycle the garbage collector cannot break, so reading any of
+    .nnz, .colcount, .factor, .perm or .get_perm() keeps the factor alive
+    forever.  .L, .rcond and .solve() are safe.  With ordering_cache on,
+    solve_cholmod read F.nnz on every call, and each call leaked its whole
+    factor (8.7 GB per iteration on the AA tile E-560_N-1240, 37 GB after 4
+    iterations).  symbfact gives the same count, without a factor.
+
+    F.perm is still read, but only before F.factorize(): in 0.5.0 that does
+    not leak, while reading it after factorize() does.  Keep it there.
     """
     from sksparse.cholmod import symbfact
     return int(symbfact(N)[0].sum())
@@ -160,6 +166,8 @@ def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=False, ordering_c
                         # WORKAROUND (see factor_nnz): count nnz(L) without F.nnz,
                         # which leaks the factor.  Original:
                         # ordering_cache.update(perm=np.array(F.perm), nnz_L=F.nnz)
+                        # F.perm must be read before F.factorize(): after it, it
+                        # leaks the factor too
                         perm = np.array(F.perm)
                         ordering_cache.update(perm=perm, nnz_L=factor_nnz(N[perm][:, perm]))
                         info['ordering'] = 'new'

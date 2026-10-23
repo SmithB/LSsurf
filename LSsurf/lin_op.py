@@ -556,6 +556,31 @@ class lin_op:
         E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size, col_N=Rinv.shape[0]).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
+    def error_op(self, col_N):
+        # the operator matrix whose rows grid_error maps to the grid, with
+        # col_N columns: grid_error(Rinv) uses error_op(Rinv.shape[0]).dot(Rinv)
+        if self.dst_ind0 is None:
+            ind0=self.ind0
+        else:
+            ind0=self.dst_ind0
+        return self.toCSR(row_N=ind0.size, col_N=col_N)
+
+    def grid_error_from_sumsq(self, E_sq, grid=None):
+        # map error estimates for the rows of error_op(), given as sums of
+        # squares (e.g. from inv_tr_upper_sumsq), to a grid, as grid_error does
+        if grid is None:
+            if self.dst_grid is None:
+                grid=self.grid
+            else:
+                grid=self.dst_grid
+        if self.dst_ind0 is None:
+            ind0=self.ind0
+        else:
+            ind0=self.dst_ind0
+        E=np.zeros(self.col_N)+np.nan
+        E[ind0]=np.sqrt(E_sq)
+        return E[grid.col_0:grid.col_N].reshape(grid.shape)
+
     def vstack(self, ops, order=None, name=None, TOC_cols=None):
         # combine a set of operators by stacking them vertically to form
         # a composite operator.  This could also be done by converting

@@ -17,7 +17,7 @@ from time import time, ctime
 from LSsurf.RDE import RDE
 import pointCollection as pc
 from scipy.stats import scoreatpercentile
-from LSsurf.inv_tr_upper import inv_tr_upper
+from LSsurf.inv_tr_upper_sumsq import inv_tr_upper_sumsq
 from LSsurf.ls_solvers import solve_ls
 from LSsurf.bias_functions import assign_bias_ID,\
         setup_bias_fit,\
@@ -253,41 +253,35 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     if report_memory:
         print(f"before rz: {int(init_memory)} k,\n\t after, allocated {int((post_rz_memory- init_memory))}")
     z=z.ravel()
-    R=R.tocsr()
+    # CSC with sorted indices: inv_tr_upper_sumsq uses it without a copy
+    R=R.tocsc()
     R.sort_indices()
     R.eliminate_zeros()
     timing['decompose_qz'] = time() - tic
 
-    E0=np.zeros(R.shape[0])
-
-    # compute Rinv for use in propagating errors.
-    # what should the tolerance be?  We will eventually square Rinv and take its
-    # row-wise sum.  We care about errors at the cm level, so
-    # size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
-    tic=time();
-    # nnz_max is the number of nonzero entries in the inverse of R.   We will
-    # initially assume that it is about 1/16 the number of elements in R,
-    # and if this is too few we will repeat the computation with 50% more space
-    # until we get an answer.
-    nnz_max = int(np.prod(R.shape)/4)
-    status = 1
-    while status == 1:
-        RR, CC, VV, status=inv_tr_upper(R, nnz_max, 1.e-5, threads=args['THREADS']);
-        if status==1:
-            print(f"smooth_fit: calc_and_parse_errors\n\tfailed to propagate errors with nnz_max = {nnz_max}, retrying with nnz_max = {int(nnz_max*1.5)}")
-            nnz_max = int(nnz_max*1.5)
-    # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
-    Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
-    # the triplets are copied into Rinv; free them (~16 bytes per entry)
-    del RR, CC, VV
+    # propagate the errors through Rinv = R^-1, keeping the entries of Rinv
+    # larger than tol.  What should the tolerance be?  We will eventually
+    # square Rinv and take its row-wise sum.  We care about errors at the cm
+    # level, so size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
+    # Only the row sums of squares of Rinv and of each averaging operator
+    # times Rinv are needed, so inv_tr_upper_sumsq adds them up one block of
+    # Rinv's columns at a time instead of storing Rinv.  perm undoes the
+    # permutation from QZ.
+    tic=time()
+    # the averaging operators act on the full model vector: Ip_c maps the
+    # rows of Rinv to it
+    op_mats = {key: op.error_op(Ip_c.shape[0]).dot(Ip_c) for key, op in avg_ops.items()}
+    E0_sq, op_sq = inv_tr_upper_sumsq(R, 1.e-5, perm=perm, ops=op_mats,
+                                      threads=args['THREADS'])
+    del R, op_mats
+    timing['propagate_errors']=time()-tic
     post_rinv_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     if report_memory:
-        print(f"after Rinv allocated {int((post_rinv_memory - post_rz_memory))} k ")
-    tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
+        print(f"after error propagation allocated {int((post_rinv_memory - post_rz_memory))} k ")
 
-    # generate the full E vector.  E0 appears to be an ndarray,
-    E0=np.array(Ip_c.dot(E0)).ravel()
+    # generate the full E vector
+    E0=np.array(Ip_c.dot(np.sqrt(E0_sq))).ravel()
     E['sigma_z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
                                      'y':grids['z0'].ctrs[0],\
                                     'sigma_z0':np.reshape(E0[Gc.TOC['cols']['z0']], grids['z0'].shape)})
@@ -296,16 +290,12 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                                     'time':grids['dz'].ctrs[2],\
                                     'sigma_dz': np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)})
 
-    # generate the lagged dz errors.  Ip_c.dot(Rinv) is the same for every
-    # operator: compute it once, not once per operator
-    Ip_c_Rinv = Ip_c.dot(Rinv)
-    del Rinv
+    # generate the lagged dz errors
     for key, op in avg_ops.items():
         E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr
                                            for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
                                           } | {
-                                            'sigma_'+key: op.grid_error(Ip_c_Rinv)})
-    del Ip_c_Rinv
+                                            'sigma_'+key: op.grid_error_from_sumsq(op_sq[key])})
 
     # generate the grid-mean error for zero lag
     if len(bias_model.keys()) >0:

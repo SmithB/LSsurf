@@ -68,6 +68,22 @@ RCOND_MIN = 1.e-14
 REORDER_FILL_RATIO = 1.1
 
 
+def factor_nnz(N):
+    """
+    nnz of the Cholesky factor of N in its given order, from CHOLMOD's
+    symbolic factorization.
+
+    WORKAROUND for scikit-sparse 0.5.0: reading CholeskyFactor.nnz (or
+    .colcount) leaks a reference to the factor, so it is never freed.  With
+    ordering_cache on, solve_cholmod read F.nnz on every call, and each call
+    leaked its whole factor (8.7 GB per iteration on the AA tile E-560_N-1240,
+    37 GB after 4 iterations).  symbfact gives the same count, without a
+    factor.
+    """
+    from sksparse.cholmod import symbfact
+    return int(symbfact(N)[0].sum())
+
+
 def solve_spqr(A, b, threads=1):
     """SPQR's QR solve, trying METIS (6) then AMD (5) orderings."""
     for ordering in [6, 5]:
@@ -141,14 +157,21 @@ def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=False, ordering_c
                     if ordering_cache is not None:
                         # F.perm (METIS, postordered) is a view into F: keep a copy
                         ordering_cache.clear()
-                        ordering_cache.update(perm=np.array(F.perm), nnz_L=F.nnz)
+                        # WORKAROUND (see factor_nnz): count nnz(L) without F.nnz,
+                        # which leaks the factor.  Original:
+                        # ordering_cache.update(perm=np.array(F.perm), nnz_L=F.nnz)
+                        perm = np.array(F.perm)
+                        ordering_cache.update(perm=perm, nnz_L=factor_nnz(N[perm][:, perm]))
                         info['ordering'] = 'new'
                 else:
                     N = N[p][:, p]
                     # already ordered and postordered: CHOLMOD's postorder is
                     # the identity, and the factor is the one F.perm gave
                     F = CholeskyFactor(N, order='postordered')
-                    fill = F.nnz / ordering_cache['nnz_L']
+                    # WORKAROUND (see factor_nnz): count nnz(L) without F.nnz,
+                    # which leaks the factor.  Original:
+                    # fill = F.nnz / ordering_cache['nnz_L']
+                    fill = factor_nnz(N) / ordering_cache['nnz_L']
                     if fill > REORDER_FILL_RATIO:
                         info['fill_ratio'] = fill
                         ordering_cache.clear()

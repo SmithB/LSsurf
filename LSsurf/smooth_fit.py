@@ -140,7 +140,9 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                            shape=(Gc.N_eq+in_TSE.sum(), Gcoo.shape[0])).tocsc()
 
         if args['VERBOSE']:
-            print("starting qr solve for iteration %d at %s with %d threads" % (iteration, ctime(), args['THREADS']), flush=True)
+            # 'qr' for SPQR (as this message has always said), else the solver's name
+            solve_name = 'qr' if args['solver'] == 'spqr' else args['solver']
+            print("starting %s solve for iteration %d at %s with %d threads" % (solve_name, iteration, ctime(), args['THREADS']), flush=True)
         # solve the equations
         tic=time();
         m0_last=m0

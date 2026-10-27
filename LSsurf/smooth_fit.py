@@ -164,7 +164,7 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         rs_data=r_data/data.sigma
         if last_iteration:
             if args['VERBOSE']:
-                print(f'Exiting after iteration {iteration} with sigma_hat = {pc.RDE(rs_data):3.2f}, dt = {time()-tic:2.2f}')
+                print(f'Exiting after iteration {iteration} with sigma_hat = {pc.RDE(rs_data[in_TSE]):3.2f}, dt = {time()-tic:2.2f}')
             break
 
         if 'sigma_extra_bin_spacing' not in args or args['sigma_extra_bin_spacing'] is None:

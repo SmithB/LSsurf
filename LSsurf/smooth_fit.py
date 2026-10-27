@@ -17,7 +17,8 @@ from time import time, ctime
 from LSsurf.RDE import RDE
 import pointCollection as pc
 from scipy.stats import scoreatpercentile
-from LSsurf.inv_tr_upper import inv_tr_upper
+from LSsurf.inv_tr_upper_sumsq import inv_tr_upper_sumsq
+from LSsurf.ls_solvers import solve_ls
 from LSsurf.bias_functions import assign_bias_ID,\
         setup_bias_fit,\
         setup_data_field_scale_fit,\
@@ -120,6 +121,9 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     N_eq = Gcoo.shape[0]
     last_iteration = (args['max_iterations'] <= 1)
     m0 = np.zeros(Ip_c.shape[0])
+    # args['cholmod_cache_ordering']: the iterations change only the rows and
+    # their weights, so the first iteration's METIS ordering is reused
+    ordering_cache = {} if args['cholmod_cache_ordering'] else None
     for iteration in range(args['max_iterations']):
         E2_plus=E_all**2
         if last_iteration and args['sigma_extra_relax']:
@@ -136,27 +140,21 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                            shape=(Gc.N_eq+in_TSE.sum(), Gcoo.shape[0])).tocsc()
 
         if args['VERBOSE']:
-            print("starting qr solve for iteration %d at %s with %d threads" % (iteration, ctime(), args['THREADS']), flush=True)
+            # 'qr' for SPQR (as this message has always said), else the solver's name
+            solve_name = 'qr' if args['solver'] == 'spqr' else args['solver']
+            print("starting %s solve for iteration %d at %s with %d threads" % (solve_name, iteration, ctime(), args['THREADS']), flush=True)
         # solve the equations
         tic=time();
         m0_last=m0
-        # the ordering determines how suitesparse orders the columns when solving
-        # the LS equation.
-        success = False
-        for ordering in [6, 5]:
-            # try METIS (A'*A) (6) first, then AMD (A'*A) second
-            #this_tic=time()
-            try:
-                with threadpool_limits(limits={'openmp': args['THREADS'], 'blas': args['THREADS']}):
-                    m0=Ip_c.dot(sparseqr.solve(Ip_r.dot(TCinv.dot(Gcoo)).tocoo(),
-                                               Ip_r.dot(TCinv.dot(rhs)),
-                                               ordering=ordering))#, tolerance=-2))
-                    success = True
-                    break
-            except Exception as e:
-                print(f"for ordering {ordering}, encountered exception {e}")
-            #print(f"with ordering {ordering}, time = {time()-this_tic}")
-        assert success, "LSsurf.smooth_fit: did not find an ordering that could solve the LS equations"
+        # args['solver']: 'spqr' (QR, METIS then AMD ordering) or the opt-in
+        # 'cholmod' (normal equations + refinement); see LSsurf/ls_solvers.py.
+        # args['cholmod_scale_columns'] factors the unit-diagonal D A'A D
+        m0=Ip_c.dot(solve_ls(Ip_r.dot(TCinv.dot(Gcoo)),
+                             Ip_r.dot(TCinv.dot(rhs)),
+                             threads=args['THREADS'], solver=args['solver'],
+                             verbose=args['VERBOSE'],
+                             scale_columns=args['cholmod_scale_columns'],
+                             ordering_cache=ordering_cache))
         timing['sparseqr_solve']=time()-tic
 
         # calculate the full data residual
@@ -206,10 +204,13 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
             if sigma_extra_masks is None:
                 print(f'\t median(sigma_extra)={np.median(sigma_extra):3.4f}')
             else:
+                # skip masks that select no data (e.g. no DEMs in the tile)
                 for m_key, ii in sigma_extra_masks.items():
-                    print(f'\t sigma_extra for {m_key} : {np.median(sigma_extra[ii]):3.4f}', flush=True)
+                    if np.any(ii):
+                        print(f'\t sigma_extra for {m_key} : {np.median(sigma_extra[ii]):3.4f}', flush=True)
                 for m_key, ii in sigma_extra_masks.items():
-                    print(f'\t sigma_hat for {m_key} : {RDE(r_data[ii]/sigma_aug[ii]):3.4f}', flush=True)
+                    if np.any(ii):
+                        print(f'\t sigma_hat for {m_key} : {RDE(r_data[ii]/sigma_aug[ii]):3.4f}', flush=True)
         if iteration > 0  and iteration > args['bias_nsigma_iteration']:
             # Calculate the number of elements that have changed in in_TSE
             frac_TSE_change = np.sum(in_TSE_last != in_TSE)/N_editable
@@ -257,39 +258,35 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
     if report_memory:
         print(f"before rz: {int(init_memory)} k,\n\t after, allocated {int((post_rz_memory- init_memory))}")
     z=z.ravel()
-    R=R.tocsr()
+    # CSC with sorted indices: inv_tr_upper_sumsq uses it without a copy
+    R=R.tocsc()
     R.sort_indices()
     R.eliminate_zeros()
     timing['decompose_qz'] = time() - tic
 
-    E0=np.zeros(R.shape[0])
-
-    # compute Rinv for use in propagating errors.
-    # what should the tolerance be?  We will eventually square Rinv and take its
-    # row-wise sum.  We care about errors at the cm level, so
-    # size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
-    tic=time();
-    # nnz_max is the number of nonzero entries in the inverse of R.   We will
-    # initially assume that it is about 1/16 the number of elements in R,
-    # and if this is too few we will repeat the computation with 50% more space
-    # until we get an answer.
-    nnz_max = int(np.prod(R.shape)/4)
-    status = 1
-    while status == 1:
-        RR, CC, VV, status=inv_tr_upper(R, nnz_max, 1.e-5);
-        if status==1:
-            print(f"smooth_fit: calc_and_parse_errors\n\tfailed to propagate errors with nnz_max = {nnz_max}, retrying with nnz_max = {int(nnz_max*1.5)}")
-            nnz_max = int(nnz_max*1.5)
-    # save Rinv as a sparse array.  The syntax perm[RR] undoes the permutation from QZ
-    Rinv=sp.coo_matrix((VV, (perm[RR], CC)), shape=R.shape).tocsr(); timing['Rinv_cython']=time()-tic;
+    # propagate the errors through Rinv = R^-1, keeping the entries of Rinv
+    # larger than tol.  What should the tolerance be?  We will eventually
+    # square Rinv and take its row-wise sum.  We care about errors at the cm
+    # level, so size(Rinv)*tol^2 = 0.01 -> tol=sqrt(0.01/size(Rinv))~ 1E-4
+    # Only the row sums of squares of Rinv and of each averaging operator
+    # times Rinv are needed, so inv_tr_upper_sumsq adds them up one block of
+    # Rinv's columns at a time instead of storing Rinv.  perm undoes the
+    # permutation from QZ.
+    tic=time()
+    # the averaging operators act on the full model vector: Ip_c maps the
+    # rows of Rinv to it
+    op_mats = {key: op.error_op(Ip_c.shape[0]).dot(Ip_c) for key, op in avg_ops.items()}
+    E0_sq, op_sq = inv_tr_upper_sumsq(R, 1.e-5, perm=perm, ops=op_mats,
+                                      threads=args['THREADS'])
+    del R, op_mats
+    timing['propagate_errors']=time()-tic
     post_rinv_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss +\
         resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     if report_memory:
-        print(f"after Rinv allocated {int((post_rinv_memory - post_rz_memory))} k ")
-    tic=time(); E0=np.sqrt(Rinv.power(2).sum(axis=1)); timing['propagate_errors']=time()-tic;
+        print(f"after error propagation allocated {int((post_rinv_memory - post_rz_memory))} k ")
 
-    # generate the full E vector.  E0 appears to be an ndarray,
-    E0=np.array(Ip_c.dot(E0)).ravel()
+    # generate the full E vector
+    E0=np.array(Ip_c.dot(np.sqrt(E0_sq))).ravel()
     E['sigma_z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
                                      'y':grids['z0'].ctrs[0],\
                                     'sigma_z0':np.reshape(E0[Gc.TOC['cols']['z0']], grids['z0'].shape)})
@@ -298,12 +295,12 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                                     'time':grids['dz'].ctrs[2],\
                                     'sigma_dz': np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)})
 
-    # generate the lagged dz errors:
+    # generate the lagged dz errors
     for key, op in avg_ops.items():
         E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr
                                            for coord, ctr in zip(op.dst_grid.coords, op.dst_grid.ctrs)
                                           } | {
-                                            'sigma_'+key: op.grid_error(Ip_c.dot(Rinv))})
+                                            'sigma_'+key: op.grid_error_from_sumsq(op_sq[key])})
 
     # generate the grid-mean error for zero lag
     if len(bias_model.keys()) >0:
@@ -455,6 +452,9 @@ def smooth_fit(**kwargs):
     'erode_source_mask':True,
     'parsing_functions':{},
     'THREADS':1,
+    'solver':'spqr',
+    'cholmod_scale_columns':False,
+    'cholmod_cache_ordering':False,
     'VERBOSE': True,
     'DEBUG': False}
     args.update(kwargs)
@@ -678,6 +678,13 @@ def smooth_fit(**kwargs):
                 'Ed':Ed,
                 'Ec':Ec}
 
+    # setup operators that take averages of the grid at different scales
+    averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+    averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
+    # setup masked averaging ops
+    averaging_ops.update(
+        setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:
         tic_iteration=time()
@@ -698,26 +705,16 @@ def smooth_fit(**kwargs):
         if args['mask_update_function'] is not None:
             parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
             args['mask_update_function'](grids, m, args)
-
-        # setup operators that take averages of the grid at different scales
-        averaging_ops = setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
-        averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
-
-        # setup masked averaging ops
-        averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+            # need to update the averaging operators if the mask has been
+            # updated:
+            averaging_ops = setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+            averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
+            averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
 
         parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
         r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]
         R['data']=np.sum(((r_data/data.sigma[data.three_sigma_edit==1])**2))
         RMS['data']=np.sqrt(np.mean((data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1])**2))
-    else:
-        # still need to make the averaging ops
-        averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
-        averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
-        # setup masked averaging ops
-        averaging_ops.update(
-            setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
-
 
     # Compute the error in the solution if requested
     if args['compute_E']:

@@ -1,4 +1,5 @@
 import json
+import pytest
 import numpy as np
 import shapely
 import pointCollection as pc
@@ -14,13 +15,13 @@ rng = np.random.default_rng(0)
 SRS_PROJ4 = '+proj=stere +lat_0=-90 +lat_ts=-71 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
 
 
-def make_grids(reference_epoch=2):
+def make_grids(reference_epoch=2, spacing=50):
     # coarse grids for a 2 km x 2 km domain, 0-2 yr, with fine grids around a curved strip
     grids = {'z0': fd_grid([[-1000, 1000], [-1000, 1000]], [200, 200], name='z0')}
     grids['dz'] = fd_grid([[-1000, 1000], [-1000, 1000], [0, 2]], [500, 500, 0.5], name='dz',
                           col_0=grids['z0'].N_nodes)
     region = shapely.LineString([(-600, -300), (200, 100), (500, 600)]).buffer(150)
-    assert fgf.setup_fine_grids(grids, region, 50, reference_epoch, grids['dz'].col_N)
+    assert fgf.setup_fine_grids(grids, region, spacing, reference_epoch, grids['dz'].col_N)
     return grids, region
 
 
@@ -77,20 +78,37 @@ def test_restrict_to_active():
     assert np.allclose(y_full, res.toCSR(col_N=grid.col_N, row_N=2000).dot(m))
 
 
-def test_fine_grid_setup():
-    grids, region = make_grids(reference_epoch=2)
+@pytest.mark.parametrize('spacing, expected', [
+    (50, {'z0': 50, 'dz': 50, 'dt': 0.5}),
+    ({'z0': 25, 'dz': 100, 'dt': 0.25}, {'z0': 25, 'dz': 100, 'dt': 0.25})])
+def test_fine_grid_setup(spacing, expected):
+    grids, region = make_grids(reference_epoch=2, spacing=spacing)
     z0f, dzf = grids['z0_fine'], grids['dz_fine']
+    assert np.all(z0f.delta == expected['z0'])
+    assert np.all(dzf.delta == [expected['dz'], expected['dz'], expected['dt']])
     assert z0f.col_0 == grids['dz'].col_N and dzf.col_0 == z0f.col_N
-    # dz_fine has no columns at the reference epoch
-    assert dzf.N_active == z0f.N_active*(dzf.shape[2]-1)
-    assert not np.any(dzf.active[:, :, 2])
-    # the region is padded by two nodes
-    assert not np.any(z0f.region_mask[0:2, :]) and not np.any(z0f.region_mask[:, -2:])
+    for grid in [z0f, dzf]:
+        # each grid's nodes are in the region, and the region is padded by two nodes
+        assert np.array_equal(grid.region_mask, fgf.region_node_mask(grid, region))
+        assert not np.any(grid.region_mask[0:2, :]) and not np.any(grid.region_mask[:, -2:])
+    assert z0f.N_active == z0f.region_mask.sum()
+    # dz_fine has no columns at the reference epoch (t=1)
+    i_ref = np.flatnonzero(dzf.ctrs[2] == 1.)[0]
+    assert dzf.N_active == dzf.region_mask.sum()*(dzf.shape[2]-1)
+    assert not np.any(dzf.active[:, :, i_ref])
     # values map back to the grid: NaN outside the region, zero at fixed nodes
     vals = dzf.grid_from_cols(np.ones(dzf.N_active))
     assert np.all(np.isnan(vals[~dzf.in_region]))
-    assert np.all(vals[:, :, 2][z0f.region_mask] == 0)
+    assert np.all(vals[:, :, i_ref][dzf.region_mask] == 0)
     assert np.all(vals[dzf.active] == 1)
+
+
+def test_fine_grid_spacing():
+    assert fgf.fine_grid_spacing(50) == {'z0': 50, 'dz': 50, 'dt': None}
+    assert fgf.fine_grid_spacing({'z0': 50, 'dz': 100}) == {'z0': 50, 'dz': 100, 'dt': None}
+    for bad in [{'z0': 50}, {'z0': 50, 'dz': 100, 'x': 1}]:
+        with pytest.raises(ValueError):
+            fgf.fine_grid_spacing(bad)
 
 
 def test_region_mask_inputs(tmp_path):
@@ -182,11 +200,12 @@ def run_fine_fit(fine_grid_args=None, compute_E=False):
                       fine_grid_args=fine_grid_args, compute_E=compute_E, VERBOSE=False)
 
 
-def test_fine_fit():
+@pytest.mark.parametrize('spacing', [50, {'z0': 50, 'dz': 100}])
+def test_fine_fit(spacing):
     # the region stays more than one coarse cell from the domain edges, so the whole-domain
     # average of the fine field is exactly its area integral divided by the domain area
     region = shapely.LineString([(-1200, -560), (1200, 160)]).buffer(300)
-    fine_grid_args = {'region': region, 'spacing': 50,
+    fine_grid_args = {'region': region, 'spacing': spacing,
                       'E_RMS': {'d2z0_dx2': 1.0, 'd3z_dx2dt': 0.3, 'd2z_dt2': 100}}
     S_c = run_fine_fit()
     S_f = run_fine_fit(fine_grid_args, compute_E=True)
@@ -204,7 +223,7 @@ def test_fine_fit():
     m, E, grids = S_f['m'], S_f['E'], S_f['grids']
     for key in ['z0_fine', 'dz_fine', 'z0_total_fine', 'dz_total_fine', 'dzdt_total_fine_lag1']:
         assert key in m and 'sigma_'+key in E
-    in_reg = grids['z0_fine'].region_mask
+    in_reg = grids['dz_fine'].region_mask
     # dz_fine is zero at the reference epoch in the region, and NaN outside it
     assert np.all(m['dz_fine'].dz_fine[:, :, 4][in_reg] == 0)
     assert np.all(np.isnan(m['dz_fine'].dz_fine[:, :, 4][~in_reg]))
@@ -215,6 +234,14 @@ def test_fine_fit():
     dz_c = lin_op(grids['dz'], name='i').interp_mtx([yg[in_reg], xg[in_reg], np.zeros(in_reg.sum())+grids['dz'].ctrs[2][k]])\
         .toCSR(row_N=in_reg.sum(), col_N=m['all'].size).dot(m['all'])
     assert np.allclose(m['dz_total_fine'].dz_total_fine[:, :, k][in_reg], dz_c + m['dz_fine'].dz_fine[:, :, k][in_reg])
+    # ... on each fine grid's own nodes
+    spacing = fgf.fine_grid_spacing(spacing)
+    assert np.all(grids['z0_fine'].delta == spacing['z0']) and np.all(grids['dz_fine'].delta[0:2] == spacing['dz'])
+    in_reg_z0 = grids['z0_fine'].region_mask
+    xg, yg = np.meshgrid(grids['z0_fine'].ctrs[1], grids['z0_fine'].ctrs[0])
+    z0_c = lin_op(grids['z0'], name='i').interp_mtx([yg[in_reg_z0], xg[in_reg_z0]])\
+        .toCSR(row_N=in_reg_z0.sum(), col_N=m['all'].size).dot(m['all'])
+    assert np.allclose(m['z0_total_fine'].z0_total_fine[in_reg_z0], z0_c + m['z0_fine'].z0_fine[in_reg_z0])
 
     # the whole-domain average includes the area integral of dz_fine
     A_c = grids['dz'].cell_area

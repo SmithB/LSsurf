@@ -19,8 +19,11 @@ dict with entries:
         containing the region, used if 'region' is not given
     region_field, region_group: field and group to read from a raster file (optional)
     region_threshold: interpolated mask values above this are in the region (default 0.5)
-    spacing: horizontal node spacing for the fine grids (required)
-    dt: time spacing for dz_fine (default: the dz grid's time spacing)
+    spacing: node spacing for the fine grids (required).  Either a number (the
+        horizontal spacing of both fine grids), or a dict, as for the smooth_fit
+        spacing argument, with entries 'z0' and 'dz' (horizontal spacings of
+        z0_fine and dz_fine) and, optionally, 'dt' (time spacing of dz_fine,
+        default: the dz grid's time spacing)
     buffer: distance by which the region is expanded (default 0)
     halo: number of nodes outside the region on which constraint equations
         are also centered (default 0)
@@ -35,12 +38,12 @@ smooth_fit outputs (in S['m'], and as 'sigma_'+key in S['E'] if errors are calcu
     z0_fine, dz_fine: the fine fields, NaN outside the region.  dz_fine is
         zero at the reference epoch.
     z0_total_fine, dz_total_fine, dzdt_total_fine_lag{N}: the coarse + fine
-        model at the fine-grid nodes.  Because the coarse and fine fields trade
-        off against each other, the errors of the totals are smaller than those
-        of the fine fields alone.
+        model at the fine-grid nodes (each on its own fine grid).  The coarse and
+        fine fields trade off against each other, so their errors are
+        correlated: use the errors of the totals for the full model.
     S['m']['z0'] and S['m']['dz'] are the coarse fields only.
 
-Provides: read_region, region_node_mask, setup_fine_grids,
+Provides: read_region, region_node_mask, fine_grid_spacing, setup_fine_grids,
     setup_fine_constraints, setup_fine_fit, parse_fine_grids,
     setup_fine_total_ops, add_fine_to_averaging_ops, fine_constraint_names
 """
@@ -55,7 +58,7 @@ from LSsurf.grid_functions import calc_cell_area
 
 fine_grid_arg_defaults = {'region': None, 'region_file': None, 'region_field': None,
                           'region_group': None, 'region_threshold': 0.5,
-                          'spacing': None, 'dt': None, 'buffer': 0, 'halo': 0,
+                          'spacing': None, 'buffer': 0, 'halo': 0,
                           'E_RMS': None, 'add_to_coarse_averages': True}
 
 # names of the fine-grid constraint equations, for reporting residuals
@@ -173,12 +176,73 @@ def region_node_mask(grid, region, buffer=0, threshold=0.5, field=None):
     return shapely.contains_xy(region, xg, yg)
 
 
+def fine_grid_spacing(spacing):
+    '''
+    Fine-grid spacing as a dict with entries 'z0', 'dz' and 'dt'
+
+    Parameters
+    ----------
+    spacing : float or dict
+        a number (the horizontal spacing of both fine grids), or a dict with
+        entries 'z0' and 'dz' (horizontal spacings) and, optionally, 'dt'
+
+    Returns
+    -------
+    dict with entries 'z0', 'dz', and 'dt' ('dt' is None if not specified)
+    '''
+    if not isinstance(spacing, dict):
+        return {'z0': spacing, 'dz': spacing, 'dt': None}
+    unknown = set(spacing) - {'z0', 'dz', 'dt'}
+    if len(unknown) > 0 or 'z0' not in spacing or 'dz' not in spacing:
+        raise ValueError(f"fine-grid spacing must be a number or a dict with entries 'z0', 'dz' "
+                         f"and, optionally, 'dt'; got {spacing}")
+    return {'dt': None} | spacing
+
+
+def region_rectangle(domain, region, spacing, buffer=0, threshold=0.5, field=None, pad=2):
+    '''
+    Find the nodes of a grid with a given spacing that cover a region
+
+    The nodes are aligned with the lower-left corner of the domain, and span the
+    bounding box of the region, padded by 'pad' nodes.
+
+    Parameters
+    ----------
+    domain : fd_grid
+        grid whose first two dimensions span the domain
+    region, buffer, threshold, field : see region_node_mask
+    spacing : float
+        node spacing
+    pad : int, optional
+        number of nodes of padding around the region. The default is 2.
+
+    Returns
+    -------
+    bds_yx : list
+        bounds of the rectangle in y and x, or None if no nodes are in the region
+    region_mask : numpy boolean array
+        True for the nodes of the rectangle that are in the region
+    '''
+    # nodes of a grid covering the domain
+    N_full = [int(np.floor((bd[1]-bd[0])/spacing+1.e-6))+1 for bd in domain.bds[0:2]]
+    full = fd_grid([[bd[0], bd[0]+(N-1)*spacing] for bd, N in zip(domain.bds[0:2], N_full)],
+                   [spacing, spacing])
+    mask_full = region_node_mask(full, region, buffer=buffer, threshold=threshold, field=field)
+    if not np.any(mask_full):
+        return None, None
+    # crop to the region's bounding box
+    ii, jj = [np.flatnonzero(np.any(mask_full, axis=1-dim)) for dim in [0, 1]]
+    i0, i1 = np.maximum(0, ii[0]-pad), np.minimum(N_full[0]-1, ii[-1]+pad)
+    j0, j1 = np.maximum(0, jj[0]-pad), np.minimum(N_full[1]-1, jj[-1]+pad)
+    return [full.ctrs[0][[i0, i1]], full.ctrs[1][[j0, j1]]], mask_full[i0:i1+1, j0:j1+1]
+
+
 def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
-                     dt=None, buffer=0, threshold=0.5, field=None, pad=2, srs_proj4=None):
+                     buffer=0, threshold=0.5, field=None, pad=2, srs_proj4=None):
     '''
     Define fine z0 and dz grids that cover a region within grids['z0']
 
-    The fine grids span the bounding box of the region, padded by 'pad' nodes,
+    Each fine grid spans the bounding box of the region, padded by 'pad' nodes,
     with nodes aligned with the lower-left corner of the domain.  Only the nodes
     in the region are active, and dz_fine is fixed at zero at the reference epoch.
 
@@ -188,14 +252,12 @@ def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
         grids from setup_grids.  The new grids are added as 'z0_fine' and 'dz_fine'
     region : shapely geometry or pointCollection.grid.data
         region in which the fine grids are defined
-    spacing : float
-        horizontal node spacing of the fine grids
+    spacing : float or dict
+        node spacing of the fine grids (see fine_grid_spacing)
     reference_epoch : int
         epoch of grids['dz'] at which dz is zero
     col_0 : int
         first column for the fine grids
-    dt : float, optional
-        time spacing for dz_fine.  The default (None) uses the spacing of grids['dz']
     buffer, threshold, field: see region_node_mask
     pad : int, optional
         number of nodes of padding around the region. The default is 2.
@@ -204,31 +266,25 @@ def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
 
     Returns
     -------
-    bool : True if the region contains any nodes
+    bool : True if the region contains nodes of both fine grids
     '''
-    z0 = grids['z0']
-    # nodes of a fine grid covering the domain
-    N_full = [int(np.floor((bd[1]-bd[0])/spacing+1.e-6))+1 for bd in z0.bds]
-    full = fd_grid([[bd[0], bd[0]+(N-1)*spacing] for bd, N in zip(z0.bds, N_full)],
-                   [spacing, spacing])
-    mask_full = region_node_mask(full, region, buffer=buffer, threshold=threshold, field=field)
-    if not np.any(mask_full):
-        return False
-    # crop to the region's bounding box
-    ii, jj = [np.flatnonzero(np.any(mask_full, axis=1-dim)) for dim in [0, 1]]
-    i0, i1 = np.maximum(0, ii[0]-pad), np.minimum(N_full[0]-1, ii[-1]+pad)
-    j0, j1 = np.maximum(0, jj[0]-pad), np.minimum(N_full[1]-1, jj[-1]+pad)
-    bds_yx = [full.ctrs[0][[i0, i1]], full.ctrs[1][[j0, j1]]]
-    region_mask = mask_full[i0:i1+1, j0:j1+1]
+    spacing = fine_grid_spacing(spacing)
+    rect = {}
+    for name in ['z0', 'dz']:
+        rect[name] = region_rectangle(grids['z0'], region, spacing[name], buffer=buffer,
+                                      threshold=threshold, field=field, pad=pad)
+        if rect[name][0] is None:
+            return False
 
+    dt = spacing['dt']
     if dt is None:
         dt = grids['dz'].delta[2]
     t_bds = grids['dz'].bds[2]
     N_t = int(np.floor((t_bds[1]-t_bds[0])/dt+1.e-6))+1
     t_ref = grids['dz'].ctrs[2][reference_epoch]
 
-    z0_f = fd_grid(bds_yx, [spacing, spacing], name='z0_fine', srs_proj4=srs_proj4)
-    dz_f = fd_grid(bds_yx + [[t_bds[0], t_bds[0]+(N_t-1)*dt]], [spacing, spacing, dt],
+    z0_f = fd_grid(rect['z0'][0], [spacing['z0']]*2, name='z0_fine', srs_proj4=srs_proj4)
+    dz_f = fd_grid(rect['dz'][0] + [[t_bds[0], t_bds[0]+(N_t-1)*dt]], [spacing['dz'], spacing['dz'], dt],
                    name='dz_fine', srs_proj4=srs_proj4)
     i_ref = np.argmin(np.abs(dz_f.ctrs[2]-t_ref))
     if np.abs(dz_f.ctrs[2][i_ref]-t_ref) > 1.e-6*dt:
@@ -236,10 +292,10 @@ def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
     fixed = np.zeros(dz_f.shape, dtype=bool)
     fixed[:, :, i_ref] = True
 
-    z0_f.set_active_nodes(region_mask, col_0=col_0)
-    dz_f.set_active_nodes(region_mask, fixed=fixed, col_0=z0_f.col_N)
+    z0_f.set_active_nodes(rect['z0'][1], col_0=col_0)
+    dz_f.set_active_nodes(rect['dz'][1], fixed=fixed, col_0=z0_f.col_N)
     for grid in [z0_f, dz_f]:
-        grid.cell_area = calc_cell_area(grid)*region_mask
+        grid.cell_area = calc_cell_area(grid)*grid.region_mask
     grids['z0_fine'] = z0_f
     grids['dz_fine'] = dz_f
     return True
@@ -262,10 +318,10 @@ def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=0):
     z0_f, dz_f = [grids['z0_fine'], grids['dz_fine']]
     root_delta_A = np.sqrt(np.prod(z0_f.delta))
     root_delta_V = np.sqrt(np.prod(dz_f.delta))
-    center_mask = z0_f.region_mask
+    center_mask = {grid.name: grid.region_mask for grid in [z0_f, dz_f]}
     if halo > 0:
         from scipy.ndimage import binary_dilation
-        center_mask = binary_dilation(center_mask, iterations=halo)
+        center_mask = {name: binary_dilation(mask, iterations=halo) for name, mask in center_mask.items()}
 
     # constraint key: (operator name, grid, operator method, extra arguments)
     constraint_types = {
@@ -279,7 +335,7 @@ def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=0):
     for key, (name, grid, method, kwargs) in constraint_types.items():
         if E_RMS.get(key) is None:
             continue
-        op = getattr(lin_op(grid, name=name), method)(center_mask=center_mask, **kwargs)
+        op = getattr(lin_op(grid, name=name), method)(center_mask=center_mask[grid.name], **kwargs)
         op.restrict_to_active()
         root_delta = root_delta_A if grid is z0_f else root_delta_V
         op.expected = np.zeros(op.N_eq) + E_RMS[key]/root_delta
@@ -330,15 +386,16 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
     if region is None:
         if args['region_file'] is None:
             raise ValueError('setup_fine_fit: fine_grid_args must specify region or region_file')
-        pad = args['buffer'] + 4*args['spacing']
+        spacing = fine_grid_spacing(args['spacing'])
+        pad = args['buffer'] + 4*np.maximum(spacing['z0'], spacing['dz'])
         region = read_region(args['region_file'], srs_proj4=srs_proj4,
                              bounds=[grids['z0'].bds[1]+np.array([-pad, pad]),
                                      grids['z0'].bds[0]+np.array([-pad, pad])],
                              field=args['region_field'], group=args['region_group'])
     if not setup_fine_grids(grids, region, args['spacing'], reference_epoch, G_data.col_N,
-                            dt=args['dt'], buffer=args['buffer'], threshold=args['region_threshold'],
+                            buffer=args['buffer'], threshold=args['region_threshold'],
                             field=args['region_field'], pad=2+args['halo'], srs_proj4=srs_proj4):
-        print('setup_fine_fit: no fine-grid nodes in the region')
+        print('setup_fine_fit: the region contains no z0_fine or no dz_fine nodes, no fine grids added')
         return False
 
     for name, coords in [('z0_fine', ['y', 'x']), ('dz_fine', ['y', 'x', 'time'])]:

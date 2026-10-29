@@ -103,6 +103,35 @@ def test_fine_grid_setup(spacing, expected):
     assert np.all(vals[dzf.active] == 1)
 
 
+@pytest.mark.parametrize('E_RMS', [
+    {'d2z0_dx2': 1.}, {'dz0_dx': 1.}, {'z0': 10.}, {'d2z0_dx2': 1., 'dz0_dx': 10., 'z0': 100.},
+    {'d3z_dx2dt': 0.3}, {'d2z_dxdt': 1.}, {'d2z_dt2': 100.}, {'dz': 10.},
+    {'d3z_dx2dt': 0.3, 'd2z_dxdt': 1., 'd2z_dt2': 100., 'dz': 10.}])
+def test_fine_constraint_choices(E_RMS):
+    # each E_RMS entry gives one constraint operator, scaled by the root of its grid's cell area (or volume)
+    grids, region = make_grids()
+    ops = []
+    fgf.setup_fine_constraints(grids, ops, E_RMS)
+    names = {'d2z0_dx2': 'grad2_z0_fine', 'dz0_dx': 'grad_z0_fine', 'z0': 'mag_z0_fine',
+             'd3z_dx2dt': 'grad2_dzdt_fine', 'd2z_dxdt': 'grad_dzdt_fine', 'd2z_dt2': 'd2z_dt2_fine', 'dz': 'mag_dz_fine'}
+    assert [op.name for op in ops] == [names[key] for key in names if key in E_RMS]
+    for key in E_RMS:
+        op = ops[[op.name for op in ops].index(names[key])]
+        grid = grids['z0_fine'] if 'z0' in op.name else grids['dz_fine']
+        assert np.allclose(op.expected, E_RMS[key]/np.sqrt(np.prod(grid.delta)))
+        assert np.all(op.c >= grid.col_0) and np.all(op.c < grid.col_N)
+
+
+def test_fine_E_RMS_validation():
+    # each fine grid needs at least one constraint, and unknown entries are errors
+    grids, region = make_grids()
+    grids = {key: grids[key] for key in ['z0', 'dz']}
+    for E_RMS, message in [({'d3z_dx2dt': 0.3}, 'z0_fine'), ({'d2z0_dx2': 1.}, 'dz_fine'),
+                           ({'d2z0_dx2': 1., 'd3z_dx2dt': 0.3, 'd2z0dx2': 1.}, 'unknown')]:
+        with pytest.raises(ValueError, match=message):
+            fgf.setup_fine_fit(None, grids, None, [], {'region': region, 'spacing': 50, 'E_RMS': E_RMS}, 2)
+
+
 def test_fine_grid_spacing():
     assert fgf.fine_grid_spacing(50) == {'z0': 50, 'dz': 50, 'dt': None}
     assert fgf.fine_grid_spacing({'z0': 50, 'dz': 100}) == {'z0': 50, 'dz': 100, 'dt': None}
@@ -200,13 +229,16 @@ def run_fine_fit(fine_grid_args=None, compute_E=False):
                       fine_grid_args=fine_grid_args, compute_E=compute_E, VERBOSE=False)
 
 
-@pytest.mark.parametrize('spacing', [50, {'z0': 50, 'dz': 100}])
-def test_fine_fit(spacing):
+@pytest.mark.parametrize('spacing, E_RMS_z0', [
+    (50, {'d2z0_dx2': 1.0}),
+    ({'z0': 50, 'dz': 100}, {'d2z0_dx2': 1.0}),
+    (50, {'dz0_dx': 1.0, 'z0': 100.})])
+def test_fine_fit(spacing, E_RMS_z0):
     # the region stays more than one coarse cell from the domain edges, so the whole-domain
     # average of the fine field is exactly its area integral divided by the domain area
     region = shapely.LineString([(-1200, -560), (1200, 160)]).buffer(300)
     fine_grid_args = {'region': region, 'spacing': spacing,
-                      'E_RMS': {'d2z0_dx2': 1.0, 'd3z_dx2dt': 0.3, 'd2z_dt2': 100}}
+                      'E_RMS': E_RMS_z0 | {'d3z_dx2dt': 0.3, 'd2z_dt2': 100}}
     S_c = run_fine_fit()
     S_f = run_fine_fit(fine_grid_args, compute_E=True)
 

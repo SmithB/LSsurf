@@ -27,9 +27,17 @@ dict with entries:
     buffer: distance by which the region is expanded (default 0)
     halo: number of nodes outside the region on which constraint equations
         are also centered (default 0)
-    E_RMS: dict of constraint weights for the fine grids, with the same keys as
-        the smooth_fit E_RMS argument ('d2z0_dx2', 'dz0_dx', 'z0' for
-        z0_fine, 'd3z_dx2dt', 'd2z_dxdt', 'd2z_dt2', 'dz' for dz_fine)
+    E_RMS: dict of constraint weights for the fine grids (required).  Any
+        combination of these entries may be given, with at least one for each grid:
+            z0_fine: 'd2z0_dx2' (curvature), 'dz0_dx' (gradient), 'z0' (magnitude)
+            dz_fine: 'd3z_dx2dt' (curvature of the rate), 'd2z_dxdt' (gradient
+                of the rate), 'd2z_dt2' (time curvature), 'dz' (magnitude)
+        As in smooth_fit, each constraint adds the integral of
+        (quantity/E_RMS)**2 over the region (and over time, for dz_fine) to the
+        misfit, alongside (residual/sigma)**2 for each datum, so each value has
+        the units of its quantity (e.g. m**-1 for d2z0_dx2, m for z0, m**-1
+        yr**-1 for d3z_dx2dt).  The equations are scaled by the square root of
+        the cell area (or volume), so the values do not depend on the grid spacing.
     add_to_coarse_averages: if True (default) the coarse averaging operators
         (avg_dz, avg_dzdt, dzdt_lag, avg_z0 and masked averages) include the fine
         fields
@@ -60,6 +68,10 @@ fine_grid_arg_defaults = {'region': None, 'region_file': None, 'region_field': N
                           'region_group': None, 'region_threshold': 0.5,
                           'spacing': None, 'buffer': 0, 'halo': 0,
                           'E_RMS': None, 'add_to_coarse_averages': True}
+
+# E_RMS keys for the fine-grid constraints
+fine_z0_constraint_keys = ['d2z0_dx2', 'dz0_dx', 'z0']
+fine_dz_constraint_keys = ['d3z_dx2dt', 'd2z_dxdt', 'd2z_dt2', 'dz']
 
 # names of the fine-grid constraint equations, for reporting residuals
 fine_constraint_names = ['grad2_z0_fine', 'grad_z0_fine', 'mag_z0_fine',
@@ -379,8 +391,14 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
     for key in ['spacing', 'E_RMS']:
         if args[key] is None:
             raise ValueError(f'setup_fine_fit: fine_grid_args must specify {key}')
-    if not any(args['E_RMS'].get(key) is not None for key in ['d3z_dx2dt', 'd2z_dxdt', 'd2z_dt2', 'dz']):
-        raise ValueError('setup_fine_fit: fine_grid_args["E_RMS"] needs at least one constraint on dz_fine')
+    unknown = set(args['E_RMS']) - set(fine_z0_constraint_keys + fine_dz_constraint_keys)
+    if len(unknown) > 0:
+        raise ValueError(f'setup_fine_fit: unknown fine_grid_args["E_RMS"] entries: {sorted(unknown)}')
+    # nodes without data are determined only by the constraints, so each grid needs at least one
+    for name, keys in [('z0_fine', fine_z0_constraint_keys), ('dz_fine', fine_dz_constraint_keys)]:
+        if not any(args['E_RMS'].get(key) is not None for key in keys):
+            raise ValueError(f'setup_fine_fit: fine_grid_args["E_RMS"] needs at least one of {keys} '
+                             f'to constrain {name}')
 
     region = args['region']
     if region is None:

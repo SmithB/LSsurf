@@ -15,6 +15,8 @@ The _LSsurf_ module provides two main classes:
   ** _fd\_op : A subclass of _lin\_op_ that constructs _lin\_op_ objects that perform template operations on a neighborhood of points.  Pre-defined subclasses perform derivatives of grid fields.
 
 The main functions of the repository are used in LSsurf/smooth_fit.py, which fits smooth gridded surfaces to pointwise input data.  See the smooth_fit_demo.ipynb notebook in the notebooks directory for a demonstration.
+
+smooth_fit can add fine-resolution z0 and dz grids that cover only a region of the domain (e.g. a set of rifts), with the fine_grid_args argument.  Within the region, the model is the coarse model plus the fine fields; the fine fields have their own (usually weaker) smoothness constraints and are pulled to zero at the edge of the region.  See LSsurf/fine_grid_functions.py for the arguments and outputs.
   
 # Setup
 

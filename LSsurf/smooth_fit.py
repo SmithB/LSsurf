@@ -28,6 +28,9 @@ from LSsurf.grid_functions import setup_grids, \
                                     validate_by_dz_mask, setup_mask, setup_z0_avg
 from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
+from LSsurf.fine_grid_functions import setup_fine_fit, parse_fine_grids, \
+                                        setup_fine_total_ops, add_fine_to_averaging_ops, \
+                                        fine_constraint_names
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
 from LSsurf.calc_sigma_extra import calc_sigma_extra, calc_sigma_extra_on_grid
 from threadpoolctl import threadpool_limits
@@ -295,6 +298,9 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                                     'time':grids['dz'].ctrs[2],\
                                     'sigma_dz': np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)})
 
+    if 'z0_fine' in grids:
+        E.update(parse_fine_grids(E0, grids, sigma=True))
+
     # generate the lagged dz errors
     for key, op in avg_ops.items():
         E['sigma_'+key] = pc.grid.data().from_dict({coord:ctr
@@ -340,6 +346,9 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
 
+    if 'z0_fine' in grids:
+        m.update(parse_fine_grids(m0, grids))
+
     # calculate height rates and averages
     for key, op  in averaging_ops.items():
         m[key] = pc.grid.data().from_dict({coord:ctr
@@ -378,7 +387,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     rc=TCinv_cov.dot(Gc.toCSR().dot(m0))
     # unscaled residuals
     ru=Gc.toCSR().dot(m0)
-    for eq_type in ['d2z_dt2','grad2_z0','grad2_dzdt','grad2_PS']:
+    for eq_type in ['d2z_dt2','grad2_z0','grad2_dzdt','grad2_PS'] + fine_constraint_names:
         if eq_type in Gc.TOC['rows']:
             R[eq_type]=np.sum(rc[Gc.TOC['rows'][eq_type]]**2)
             RMS[eq_type]=np.sqrt(np.mean(ru[Gc.TOC['rows'][eq_type]]**2))
@@ -387,22 +396,38 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
         r_scaled = r/np.sqrt(data.sigma[data.three_sigma_edit]**2 + data.sigma_extra[data.three_sigma_edit]**2)
     else:
         r_scaled=r/data.sigma[data.three_sigma_edit]
-    for ff in ['dz','z0']:
-        m[ff].assign({'count':G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.\
-                        dot(np.ones_like(r)).reshape(grids[ff].shape)})
+    G_edited=G_data.toCSR()[data.three_sigma_edit,:]
+    for ff in ['dz','z0','dz_fine','z0_fine']:
+        if ff not in grids:
+            continue
+        # sums over the edited data for each node of grid ff
+        G_ff_T=G_edited[:,G_data.TOC['cols'][ff]].T
+        node_sum=lambda vals: grids[ff].grid_from_cols(G_ff_T.dot(vals))
+        m[ff].assign({'count':node_sum(np.ones_like(r))})
         m[ff].count[m[ff].count==0]=np.nan
-        m[ff].assign({'misfit_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_scaled**2)\
-                                        .reshape(grids[ff].shape)/m[ff].count)})
-        m[ff].assign({'misfit_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r**2)\
-                                         .reshape(grids[ff].shape)/m[ff].count)})
+        m[ff].assign({'misfit_scaled_rms':np.sqrt(node_sum(r_scaled**2)/m[ff].count)})
+        m[ff].assign({'misfit_rms':np.sqrt(node_sum(r**2)/m[ff].count)})
         # TBD: move to a "post_analysis_function"
         if 'tide' in data.fields:
             r_notide=(data.z+data.tide-data.z_est)[data.three_sigma_edit]
             r_notide_scaled=r_notide/data.sigma[data.three_sigma_edit]
-            m[ff].assign({'misfit_notide_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_notide**2)\
-                                        .reshape(grids[ff].shape)/m[ff].count)})
-            m[ff].assign({'misfit_notide_scaled_rms':np.sqrt(G_data.toCSR()[:,G_data.TOC['cols'][ff]][data.three_sigma_edit,:].T.dot(r_notide_scaled**2)\
-                                        .reshape(grids[ff].shape)/m[ff].count)})
+            m[ff].assign({'misfit_notide_rms':np.sqrt(node_sum(r_notide**2)/m[ff].count)})
+            m[ff].assign({'misfit_notide_scaled_rms':np.sqrt(node_sum(r_notide_scaled**2)/m[ff].count)})
+
+def setup_all_averaging_ops(grids, G_data, args):
+    # operators that average the model at different scales, used to report
+    # averages and their errors
+    averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
+    averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
+    # setup masked averaging ops
+    averaging_ops.update(
+        setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+    if 'z0_fine' in grids:
+        if args['fine_grid_args'].get('add_to_coarse_averages', True):
+            add_fine_to_averaging_ops(averaging_ops, grids)
+        # coarse + fine model on the fine grids
+        averaging_ops.update(setup_fine_total_ops(grids, G_data.col_N, dzdt_lags=args['dzdt_lags']))
+    return averaging_ops
 
 def smooth_fit(**kwargs):
     required_fields=('data','W','ctr','spacing','E_RMS')
@@ -451,6 +476,7 @@ def smooth_fit(**kwargs):
     'z0_average_scale':None,
     'erode_source_mask':True,
     'parsing_functions':{},
+    'fine_grid_args':None,
     'THREADS':1,
     'solver':'spqr',
     'cholmod_scale_columns':False,
@@ -538,6 +564,11 @@ def smooth_fit(**kwargs):
     setup_smoothness_constraints(grids, constraint_op_list, args['E_RMS'],
                                  args['mask_scale'],
                                  scaling_masks = constraint_scaling_masks)
+
+    # add fine-resolution grids within a region, if requested
+    if args['fine_grid_args'] is not None:
+        setup_fine_fit(data, grids, G_data, constraint_op_list, args['fine_grid_args'],
+                       args['reference_epoch'], srs_proj4=args['srs_proj4'])
 
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
@@ -679,11 +710,7 @@ def smooth_fit(**kwargs):
                 'Ec':Ec}
 
     # setup operators that take averages of the grid at different scales
-    averaging_ops=setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
-    averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
-    # setup masked averaging ops
-    averaging_ops.update(
-        setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+    averaging_ops=setup_all_averaging_ops(grids, G_data, args)
 
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:
@@ -707,9 +734,7 @@ def smooth_fit(**kwargs):
             args['mask_update_function'](grids, m, args)
             # need to update the averaging operators if the mask has been
             # updated:
-            averaging_ops = setup_averaging_ops(grids['dz'], grids['dz'].col_N, args, grids['dz'].cell_area)
-            averaging_ops.update(setup_z0_avg(grids, grids['dz'].col_N, args))
-            averaging_ops.update(setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
+            averaging_ops = setup_all_averaging_ops(grids, G_data, args)
 
         parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args)
         r_data=data.z_est[data.three_sigma_edit==1]-data.z[data.three_sigma_edit==1]

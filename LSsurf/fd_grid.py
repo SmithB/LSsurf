@@ -77,6 +77,8 @@ class fd_grid(object):
         else:
             self.col_N=col_N
         self.xform = xform
+        # active-node bookkeeping, used if only some nodes have columns (see set_active_nodes)
+        self.col_map=None
         self.mask=np.ones(self.shape[0:2], dtype=bool)
         self.mask_3d=None
         self.erode_source_mask = erode_source_mask
@@ -86,6 +88,63 @@ class fd_grid(object):
     def copy(self):
 
         return copy.deepcopy(self)
+
+    def set_active_nodes(self, region_mask, fixed=None, col_0=None):
+        """
+        Give columns only to the nodes of the grid in a region
+
+        Operators built on the grid's full rectangle are mapped to the active
+        nodes with lin_op.restrict_to_active, and inactive nodes are treated as
+        zero.  The active nodes get columns col_0 to col_0+N_active-1.
+
+        Parameters
+        ----------
+        region_mask : numpy boolean array
+            mask for the first two dimensions of the grid, True for nodes in the region.
+        fixed : numpy boolean array, optional
+            mask with the grid's shape, True for nodes in the region that are held at zero
+            (e.g. the reference epoch of a dz grid). The default is None.
+        col_0 : int, optional
+            first column for the active nodes.  If None, self.col_0 is used. The default is None.
+        """
+        if col_0 is not None:
+            self.col_0=col_0
+        self.region_mask=region_mask.astype(bool)
+        self.in_region=np.broadcast_to(
+            self.region_mask.reshape(self.region_mask.shape + (1,)*(self.N_dims-2)), self.shape)
+        self.active=self.in_region.copy()
+        if fixed is not None:
+            self.active &= ~fixed
+        self.N_active=int(self.active.sum())
+        self.col_map=np.zeros(self.N_nodes, dtype=int)-1
+        self.col_map[np.flatnonzero(self.active.ravel())]=self.col_0+np.arange(self.N_active)
+        self.col_N=self.col_0+self.N_active
+        self.mask=self.region_mask
+
+    def grid_from_cols(self, vals, fill_value=np.nan, fixed_value=0.):
+        """
+        Map values for the grid's columns to an array with the grid's shape
+
+        Parameters
+        ----------
+        vals : numpy array
+            one value for each of the grid's columns (col_0 to col_N-1)
+        fill_value : float, optional
+            value for nodes outside the region. The default is np.nan.
+        fixed_value : float, optional
+            value for fixed nodes in the region. The default is 0.
+
+        Returns
+        -------
+        numpy array with the grid's shape
+        """
+        if self.col_map is None:
+            return np.reshape(vals, self.shape)
+        out=np.zeros(self.N_nodes)+fill_value
+        out[self.in_region.ravel()]=fixed_value
+        active=self.col_map >= 0
+        out[active]=vals[self.col_map[active]-self.col_0]
+        return out.reshape(self.shape)
 
     def validate_pts(self, pts):
         # check whether points are inside the grid

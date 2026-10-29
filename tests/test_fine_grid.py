@@ -285,3 +285,39 @@ def test_fine_fit(spacing, E_RMS_z0):
 
     # constraint residuals are reported for the fine grids
     assert 'grad2_dzdt_fine' in S_f['RMS']
+
+
+def test_fine_grid_args_for_errors():
+    args = {'region': None, 'spacing': {'z0': 50, 'dz': 100, 'dt': 0.25}, 'E_RMS': {}}
+    assert fgf.fine_grid_args_for_errors(args)['spacing'] == {'z0': 200, 'dz': 200, 'dt': 0.25}
+    assert fgf.fine_grid_args_for_errors(args | {'error_res_scale': [2, 3]})['spacing'] == {'z0': 100, 'dz': 300, 'dt': 0.25}
+    assert fgf.fine_grid_args_for_errors(args | {'error_res_scale': 1})['spacing'] == args['spacing']
+    assert fgf.fine_grid_args_for_errors(args | {'spacing': 50})['spacing'] == {'z0': 200, 'dz': 100, 'dt': None}
+    # the input is not changed
+    assert args['spacing'] == {'z0': 50, 'dz': 100, 'dt': 0.25}
+    with pytest.raises(ValueError):
+        fgf.fine_grid_args_for_errors(args | {'error_res_scale': {'z0': 4}})
+
+
+def test_fine_errors_to_grid():
+    # a bilinear field on a coarse grid, NaN outside a region, interpolated to a finer grid
+    grids, region = make_grids(spacing=200)
+    coarse = grids['dz_fine']
+    yc, xc = np.meshgrid(coarse.ctrs[0], coarse.ctrs[1], indexing='ij')
+    vals = (1 + 1e-3*xc + 2e-3*yc)[:, :, None] * (1 + np.arange(coarse.shape[2]))[None, None, :]
+    vals[~coarse.in_region] = np.nan
+    E = pc.grid.data().from_dict({'x': coarse.ctrs[1], 'y': coarse.ctrs[0], 'time': coarse.ctrs[2], 'sigma': vals})
+    fine = fd_grid(coarse.bds[0:2], [50, 50])
+    valid = fgf.region_node_mask(fine, region)
+    out = fgf.fine_errors_to_grid(E, fine.ctrs[1], fine.ctrs[0], valid=np.repeat(valid[:, :, None], coarse.shape[2], axis=2))
+    assert out.shape == (fine.shape[0], fine.shape[1], coarse.shape[2])
+    yf, xf = np.meshgrid(fine.ctrs[0], fine.ctrs[1], indexing='ij')
+    expected = (1 + 1e-3*xf + 2e-3*yf)[:, :, None] * (1 + np.arange(coarse.shape[2]))[None, None, :]
+    # without a valid mask, the nearest-node filling gives values everywhere
+    assert np.all(np.isfinite(fgf.fine_errors_to_grid(E, fine.ctrs[1], fine.ctrs[0])))
+    # the interpolation is exact where all four surrounding coarse nodes are in the region
+    inside_coarse = pc.grid.data().from_dict({'x': coarse.ctrs[1], 'y': coarse.ctrs[0],
+                                              'z': coarse.region_mask.astype(float)}).interp(xf, yf) > 0.999
+    assert np.allclose(out[inside_coarse], expected[inside_coarse])
+    # every valid node gets a value, and the others are NaN
+    assert np.all(np.isfinite(out[valid])) and np.all(np.isnan(out[~valid]))

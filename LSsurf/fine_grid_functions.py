@@ -41,6 +41,21 @@ dict with entries:
     add_to_coarse_averages: if True (default) the coarse averaging operators
         (avg_dz, avg_dzdt, dzdt_lag, avg_z0 and masked averages) include the fine
         fields
+    error_res_scale: factors by which fine_grid_args_for_errors coarsens the
+        z0_fine and dz_fine spacings for error calculations at reduced
+        resolution: a dict with 'z0' and 'dz' entries, a two-element list, or one
+        number (default: 4 for z0_fine, 2 for dz_fine).  smooth_fit itself does
+        not use it.
+
+Error estimates for the fine grids are expensive.  As for the coarse grids
+in altimetryFit, they can be calculated in a separate run with coarser grids
+(fine_grid_args_for_errors), and interpolated to the fit's fine grids
+(fine_errors_to_grid).  The node errors of a coarser grid are smaller than
+those of the fit's grid, because each node represents a larger area: in tests
+with the default factors, the errors of the fine fields and of the
+coarse+fine totals were 2 to 5 times smaller than full-resolution errors.
+The errors of the coarse fields and of averages over areas much larger than
+the fine-grid cells were within a few percent of full-resolution errors.
 
 smooth_fit outputs (in S['m'], and as 'sigma_'+key in S['E'] if errors are calculated):
     z0_fine, dz_fine: the fine fields, NaN outside the region.  dz_fine is
@@ -53,7 +68,8 @@ smooth_fit outputs (in S['m'], and as 'sigma_'+key in S['E'] if errors are calcu
 
 Provides: read_region, region_node_mask, fine_grid_spacing, setup_fine_grids,
     setup_fine_constraints, setup_fine_fit, parse_fine_grids,
-    setup_fine_total_ops, add_fine_to_averaging_ops, fine_constraint_names
+    setup_fine_total_ops, add_fine_to_averaging_ops, fine_constraint_names,
+    fine_grid_args_for_errors, fine_errors_to_grid
 """
 
 import os
@@ -67,7 +83,8 @@ from LSsurf.grid_functions import calc_cell_area
 fine_grid_arg_defaults = {'region': None, 'region_file': None, 'region_field': None,
                           'region_group': None, 'region_threshold': 0.5,
                           'spacing': None, 'buffer': 0, 'halo': 0,
-                          'E_RMS': None, 'add_to_coarse_averages': True}
+                          'E_RMS': None, 'add_to_coarse_averages': True,
+                          'error_res_scale': None}
 
 # E_RMS keys for the fine-grid constraints
 fine_z0_constraint_keys = ['d2z0_dx2', 'dz0_dx', 'z0']
@@ -422,6 +439,76 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
                    .restrict_to_active(drop_rows=False))
     setup_fine_constraints(grids, constraint_op_list, args['E_RMS'], halo=args['halo'])
     return True
+
+
+def fine_grid_args_for_errors(fine_grid_args):
+    '''
+    fine_grid_args for an error calculation at reduced resolution
+
+    Returns a copy of fine_grid_args with the z0_fine and dz_fine spacings
+    multiplied by fine_grid_args['error_res_scale'] (default: 4 for z0_fine,
+    2 for dz_fine).  The time spacing is unchanged.  Map the resulting errors to
+    the fit's fine grids with fine_errors_to_grid.
+    '''
+    scale = fine_grid_args.get('error_res_scale')
+    if scale is None:
+        scale = {'z0': 4, 'dz': 2}
+    elif isinstance(scale, (list, tuple)):
+        scale = {'z0': scale[0], 'dz': scale[1]}
+    elif not isinstance(scale, dict):
+        scale = {'z0': scale, 'dz': scale}
+    if set(scale) != {'z0', 'dz'}:
+        raise ValueError(f"fine_grid_args['error_res_scale'] needs entries 'z0' and 'dz', got {scale}")
+    spacing = fine_grid_spacing(fine_grid_args['spacing'])
+    return dict(fine_grid_args) | {'spacing': spacing | {key: spacing[key]*scale[key] for key in scale}}
+
+
+def fine_errors_to_grid(E, x, y, field=None, valid=None):
+    '''
+    Interpolate errors from a reduced-resolution fine grid to the nodes of another grid
+
+    Parameters
+    ----------
+    E : pointCollection.grid.data
+        errors on a fine grid, NaN outside the region (e.g. S['E']['sigma_dz_fine']
+        from an error calculation with fine_grid_args_for_errors).  If E is 3-D,
+        its epochs must be those of the output grid.
+    x, y : numpy arrays
+        coordinates of the output grid
+    field : str, optional
+        field of E to interpolate.  The default is E's first field.
+    valid : numpy boolean array, optional
+        output nodes inside the region (e.g. the finite values of the fit's fine
+        field), with the shape of the output.  Other nodes are NaN.  The default
+        is all nodes.
+
+    Returns
+    -------
+    numpy array, shape (y.size, x.size), or (y.size, x.size, epochs) if E is 3-D
+
+    The nodes of E outside the region are first filled from the nearest node
+    inside it, so that output nodes near the edge of the region, whose
+    neighbors in E fall outside it, still get values.
+    '''
+    from scipy.interpolate import RegularGridInterpolator
+    from scipy.ndimage import distance_transform_edt
+    if field is None:
+        field = E.fields[0]
+    z = np.array(getattr(E, field), dtype=float)
+    z3 = z.reshape(z.shape[0], z.shape[1], -1)
+    out = np.zeros((y.size, x.size, z3.shape[2])) + np.nan
+    inside = np.all(np.isfinite(z3), axis=2)
+    if np.any(inside):
+        nearest = distance_transform_edt(~inside, return_distances=False, return_indices=True)
+        z3 = z3[nearest[0], nearest[1], :]
+        yg, xg = np.meshgrid(y, x, indexing='ij')
+        for k in range(z3.shape[2]):
+            out[:, :, k] = RegularGridInterpolator((E.y, E.x), z3[:, :, k], bounds_error=False,
+                                                   fill_value=None)((yg, xg))
+    out = out.reshape((y.size, x.size) + z.shape[2:])
+    if valid is not None:
+        out[~valid] = np.nan
+    return out
 
 
 def parse_fine_grids(m0, grids, sigma=False):

@@ -552,7 +552,8 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        E=np.zeros(self.col_N)+np.nan
+        # size E by the output grid, as in grid_prod
+        E=np.zeros(grid.col_N+1)+np.nan
         E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size, col_N=Rinv.shape[0]).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
@@ -577,7 +578,8 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        E=np.zeros(self.col_N)+np.nan
+        # size E by the output grid, as in grid_prod
+        E=np.zeros(grid.col_N+1)+np.nan
         E[ind0]=np.sqrt(E_sq)
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 

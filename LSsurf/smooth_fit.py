@@ -331,6 +331,11 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
 
 def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_model, args):
 
+    # the dz mask: if the dz grid has a time-varying mask, report it
+    if grids['dz'].mask_3d is not None:
+        dz_mask = np.asarray(grids['dz'].mask_3d.z, dtype=bool)
+    else:
+        dz_mask = grids['dz'].mask
     # reshape the components of m to the grid shapes
     m['z0']=pc.grid.data().from_dict({'x':grids['z0'].ctrs[1],\
                                      'y':grids['z0'].ctrs[0],\
@@ -342,7 +347,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
                                      'time':grids['dz'].ctrs[2],\
                                      'dz': np.reshape(m0[G_data.TOC['cols']['dz']], grids['dz'].shape),\
                                      'cell_area':grids['dz'].cell_area, \
-                                     'mask':grids['dz'].mask})
+                                     'mask':dz_mask})
 
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})

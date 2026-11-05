@@ -25,7 +25,8 @@ from LSsurf.bias_functions import assign_bias_ID,\
         parse_biases
 from LSsurf.grid_functions import setup_grids, \
                                     setup_averaging_ops, setup_avg_mask_ops,\
-                                    validate_by_dz_mask, setup_mask, setup_z0_avg
+                                    validate_by_dz_mask, setup_mask, setup_z0_avg,\
+                                    resolve_mask_roles, as_mask_dict, edit_data_by_mask
 from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.fine_grid_functions import setup_fine_fit, parse_fine_grids, \
@@ -436,6 +437,9 @@ def smooth_fit(**kwargs):
     'return_fit_objects':False,
     'mask_file':None,
     'mask_data':None,
+    'grid_masks':None,
+    'data_mask':None,
+    'data_mask_coords':None,
     'mask_update_function':None,
     'mask_scale': {0:10,1:1},
     'compute_E':False,
@@ -516,9 +520,17 @@ def smooth_fit(**kwargs):
     # subset the data based on the valid mask
     data=args['data'].copy_subset(valid_data)
 
+    # if masks have been assigned roles, edit the data with the data mask
+    role_names = resolve_mask_roles(args['mask_data'], grid_masks=args['grid_masks'],
+                                    data_mask=args['data_mask'])
+    if role_names is not None:
+        if args['VERBOSE']:
+            print("smooth_fit: masks: " + ', '.join([f'{role}:{name}' for role, name in role_names.items()]))
+        edit_data_by_mask(data, as_mask_dict(args['mask_data'])[role_names['data']],
+                          valid_data, coords=args['data_mask_coords'])
     # if we have a mask file, use it to subset the data
     # needs to be done after the valid subset because otherwise the interp_mtx for the mask file fails.
-    if args['mask_file'] is not None and grids['dz'].mask_3d is None:
+    elif args['mask_file'] is not None and grids['dz'].mask_3d is None:
         setup_mask(data, grids, valid_data, bds, args)
     else:
         validate_by_dz_mask(data, grids, valid_data)

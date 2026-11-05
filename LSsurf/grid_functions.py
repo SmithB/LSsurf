@@ -18,8 +18,108 @@ import pointCollection as pc
     fitting problems
 
     Contains:
-        setup_grids, sum_cell_area, calc_cell_area, setup_averaging_ops, setup_avg_mask_ops, setup_mask
+        setup_grids, sum_cell_area, calc_cell_area, setup_averaging_ops, setup_avg_mask_ops, setup_mask,
+        resolve_mask_roles, as_mask_dict, union_of_mask_epochs, edit_data_by_mask
 '''
+
+# grids that can be assigned a mask (see resolve_mask_roles)
+GRID_MASK_ROLES = ('z0', 'dz')
+
+
+def as_mask_dict(mask_data):
+    '''
+    Return mask_data as a dictionary of masks keyed by name.
+
+    A single mask (not a dictionary) is returned as {'default': mask_data}
+    '''
+    if isinstance(mask_data, dict):
+        return mask_data
+    return {'default': mask_data}
+
+
+def resolve_mask_roles(mask_data, grid_masks=None, data_mask=None):
+    '''
+    Find the name of the mask used in each role.
+
+    The roles are the masks for the z0 and dz grids, and the mask used to edit the data.
+
+    Inputs:
+    mask_data: (pc.grid.data, or dict of pc.grid.data) a mask, or a dictionary of masks keyed by name.
+        A single mask is named 'default'.
+    grid_masks: (dict, or None) maps grid names ('z0', 'dz') to mask names in mask_data
+    data_mask: (str, or None) name of the mask in mask_data used to edit the data
+
+    Roles that are not assigned use the mask named 'default', or the only mask in mask_data if it
+    contains just one.
+
+    Outputs:
+    role_names: (dict, or None) mask names for the roles 'z0', 'dz', and 'data'.  None if neither grid_masks
+        nor data_mask is specified: then mask_data is used as it was before roles were introduced (one mask, or
+        a {'z0':, 'dz':} dictionary, for the grids; data are edited with the grid masks.  See setup_grids,
+        setup_mask, and validate_by_dz_mask)
+    '''
+    if grid_masks is None and data_mask is None:
+        return None
+    if mask_data is None:
+        raise ValueError('mask roles were assigned (grid_masks or data_mask), but no mask_data was given')
+    masks = as_mask_dict(mask_data)
+    if grid_masks is None:
+        grid_masks = {}
+    unknown = set(grid_masks) - set(GRID_MASK_ROLES)
+    if unknown:
+        raise ValueError(f'grid_masks can only assign masks to grids {GRID_MASK_ROLES}, got {sorted(unknown)}')
+    assigned = dict(grid_masks, data=data_mask)
+    role_names = {}
+    for role in GRID_MASK_ROLES + ('data',):
+        role_names[role] = assigned.get(role)
+        if role_names[role] is None:
+            if 'default' in masks:
+                role_names[role] = 'default'
+            elif len(masks) == 1:
+                role_names[role] = list(masks)[0]
+            else:
+                raise ValueError(f'no mask was assigned to {role}, and mask_data has no "default" mask')
+        if role_names[role] not in masks:
+            raise ValueError(f'mask "{role_names[role]}" (assigned to {role}) is not in mask_data, which has {list(masks)}')
+    return role_names
+
+
+def union_of_mask_epochs(mask_data, t_bds):
+    '''
+    Collapse a time-varying (3-D) mask to a 2-D mask that is true where the mask is true in any epoch within t_bds
+    '''
+    valid_t = (mask_data.t >= t_bds[0]) & (mask_data.t <= t_bds[-1])
+    return pc.grid.data().from_dict({
+        'x':mask_data.x,
+        'y':mask_data.y,
+        'z':np.sum(mask_data.z[:,:,valid_t], axis=2)>0
+        })
+
+
+def edit_data_by_mask(data, mask_data, valid_data, coords=None):
+    '''
+    Mark datapoints that are outside a mask as invalid
+
+    Data are kept where the mask, interpolated to the data, is greater than 0.5.  Data outside the extent
+    of the mask are removed.
+    Inputs:
+    data: (pc.data) data structure.
+    mask_data: (pc.grid.data) the mask.  If it has a time dimension, it is interpolated in time as well.
+    valid_data: (numpy boolean array, size(data)) indicates valid data points
+    coords: (list of str) names of the data fields at which the mask is evaluated: x, y, and (for a
+        time-varying mask) time.  The default is ['x', 'y', 'time'].
+    '''
+    if coords is None:
+        coords = ['x', 'y', 'time']
+    xyt = [getattr(data, field) for field in coords]
+    if len(mask_data.shape) == 3:
+        mask_i = mask_data.interp(xyt[0], xyt[1], xyt[2])
+    else:
+        mask_i = mask_data.interp(xyt[0], xyt[1])
+    keep = np.nan_to_num(mask_i) > 0.5
+    if not np.all(keep):
+        data.index(keep)
+        valid_data[valid_data] = keep
 
 
 def setup_grids(args):
@@ -33,7 +133,11 @@ def setup_grids(args):
         spacing: dictionary with entries 'z0','dz' and 'dt' specifying the spacing of the z0 grid, the spacing of the dz grid, and the duration of the epochs
         srs_proj4: a proj4 string specifying the data projection
         mask_file: the mask file which has 1 for points in the domain (data will be used and strong constraints applied)
-        mask_data: pointCollection.data object containing the mask.  If this is specified, mask_file is ignored
+        mask_data: pointCollection.data object containing the mask.  If this is specified, mask_file is ignored.
+            May also be a dictionary of masks keyed by name (see resolve_mask_roles)
+    Optional entries:
+        grid_masks: (dict) maps grid names ('z0', 'dz') to mask names in mask_data
+        data_mask: (str) name of the mask used to edit the data (used here only to decide whether masks have roles)
     Outputs:
         grids: (dict) a dictionary with entries 'z0', 'dz' and 't', each containing a fd_grid object
         bds: (dict) a dictionary specifying the domain bounds in x, y, and t (2-element vector for each)
@@ -44,40 +148,46 @@ def setup_grids(args):
     '''
     bds={coord:args['ctr'][coord]+np.array([-0.5, 0.5])*args['W'][coord] for coord in ('x','y','t')}
     grids=dict()
-    z0_mask_data=None
-    if args['mask_data'] is not None:
-        mask_file = None
-        if isinstance(args['mask_data'], dict):
-            z0_mask_data=args['mask_data']['z0']
-        elif len(args['mask_data'].shape)==3:
-            z0_mask_data=args['mask_data'].copy()
-            valid_t = (args['mask_data'].t >= bds['t'][0]) & (args['mask_data'].t <= bds['t'][-1])
+    mask_interp_threshold=0.95 # interpolated masks for dz should cover a  minimal area
+    role_names = resolve_mask_roles(args['mask_data'], grid_masks=args.get('grid_masks'),
+                                    data_mask=args.get('data_mask'))
+    if role_names is not None:
+        # each grid uses the mask assigned to it
+        masks = as_mask_dict(args['mask_data'])
+        z0_mask_file, dz_mask_file = None, None
+        z0_mask_data = masks[role_names['z0']]
+        if len(z0_mask_data.shape)==3:
             # z0 mask data is any cell that is valid in any epoch in the time-varying mask data
-            z0_mask_data=pc.grid.data().from_dict({
-                'x':args['mask_data'].x,
-                'y':args['mask_data'].y,
-                'z':np.sum(args['mask_data'].z[:,:,valid_t], axis=2)>0
-                })
+            z0_mask_data = union_of_mask_epochs(z0_mask_data, bds['t'])
+        dz_mask_data = masks[role_names['dz']]
     else:
-        mask_file=args['mask_file']
+        z0_mask_file = args['mask_file']
+        z0_mask_data=None
+        if args['mask_data'] is not None:
+            dz_mask_file = None
+            if isinstance(args['mask_data'], dict):
+                z0_mask_data=args['mask_data']['z0']
+            elif len(args['mask_data'].shape)==3:
+                # z0 mask data is any cell that is valid in any epoch in the time-varying mask data
+                z0_mask_data=union_of_mask_epochs(args['mask_data'], bds['t'])
+        else:
+            dz_mask_file=args['mask_file']
+        dz_mask_data=args['mask_data']
+        if isinstance(args['mask_data'], dict):
+            dz_mask_data=dz_mask_data['dz']
+            mask_interp_threshold=0.5
 
     if 'erode_source_mask' not in args:
         args['erode_source_mask']=True
 
     grids['z0']=fd_grid( [bds['y'], bds['x']], args['spacing']['z0']*np.ones(2),\
-                        name='z0', srs_proj4=args['srs_proj4'], mask_file=args['mask_file'],\
+                        name='z0', srs_proj4=args['srs_proj4'], mask_file=z0_mask_file,\
                         mask_data=z0_mask_data, erode_source_mask=args['erode_source_mask'])
-
-    mask_interp_threshold=0.95 # interpolated masks for dz should cover a  minimal area
-    dz_mask_data=args['mask_data']
-    if isinstance(args['mask_data'], dict):
-        dz_mask_data=dz_mask_data['dz']
-        mask_interp_threshold=0.5
 
     grids['dz']=fd_grid( [bds['y'], bds['x'], bds['t']], \
                         [args['spacing']['dz'], args['spacing']['dz'], args['spacing']['dt']], \
                         name='dz', col_0=grids['z0'].N_nodes, srs_proj4=args['srs_proj4'], \
-                        mask_file=mask_file, mask_data=dz_mask_data, \
+                        mask_file=dz_mask_file, mask_data=dz_mask_data, \
                         mask_interp_threshold = mask_interp_threshold, \
                         erode_source_mask=args['erode_source_mask'])
 

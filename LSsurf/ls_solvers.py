@@ -18,7 +18,7 @@ estimate says A'A is numerically singular (rcond < RCOND_MIN), or when
 refinement does not converge.  A missing scikit-sparse is an error, not a fallback: whoever
 asked for cholmod should find out it is not installed.
 
-scale_columns=True (opt-in, cholmod only) factors D A'A D instead of A'A, with
+scale_columns=True (the default, cholmod only) factors D A'A D instead of A'A, with
 D = diag(1/||a_j||), so the normal matrix has a unit diagonal, then maps the
 solution back (x = D y).  The solution is the same, and the factorization has
 the same sparsity and cost, but CHOLMOD's rcond, (min diag(L)/max diag(L))**2,
@@ -27,6 +27,7 @@ near-dependence between columns: on the north-Greenland E210_N-680 fits the
 unscaled rcond is 3e-16 to 1.4e-14, mostly below RCOND_MIN, though the solution
 matches SPQR to 1e-8 m; scaled, it is 1e-7 to 2e-5.  Scaling adds ~1% to the
 solve.  A repeated column still gives a singular scaled matrix.
+scale_columns=False factors A'A itself.
 
 ordering_cache (opt-in, cholmod only): a dict that keeps the METIS ordering
 between calls.  The first call factors as usual and stores the factor's
@@ -101,7 +102,7 @@ def solve_spqr(A, b, threads=1):
     raise AssertionError("LSsurf.smooth_fit: did not find an ordering that could solve the LS equations")
 
 
-def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=False, ordering_cache=None):
+def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=True, ordering_cache=None):
     """
     Normal-equation solve with refinement.  Returns (x, info); x is None if
     the solve should fall back to SPQR, and info['reason'] says why.
@@ -213,7 +214,7 @@ def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=False, ordering_c
     return x, info
 
 
-def solve_ls(A, b, threads=1, solver='spqr', verbose=True, scale_columns=False,
+def solve_ls(A, b, threads=1, solver='spqr', verbose=True, scale_columns=True,
              ordering_cache=None):
     """
     min ||A x - b|| with the named solver; see the module docstring.

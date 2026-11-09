@@ -65,11 +65,12 @@ def test_rank_deficient_falls_back_to_spqr(capsys):
 
 def test_column_scaling_accepts_badly_scaled_columns(capsys):
     # columns over 8 decades: unscaled rcond 1.2e-16 falls back, though the
-    # columns are independent; scaled rcond is 0.66 and the solve matches SPQR
+    # columns are independent; scaled (the default) rcond is 0.66 and the
+    # solve matches SPQR
     A, b = random_ls(scale_decades=8)
-    solve_ls(A, b, solver='cholmod')
+    solve_ls(A, b, solver='cholmod', scale_columns=False)
     assert 'FALLING BACK TO SPQR' in capsys.readouterr().out
-    x_ch = solve_ls(A, b, solver='cholmod', scale_columns=True)
+    x_ch = solve_ls(A, b, solver='cholmod')
     assert 'FALLING BACK' not in capsys.readouterr().out
     assert rel_diff(x_ch, solve_spqr(A, b)) < 1e-9
 
@@ -78,7 +79,7 @@ def test_column_scaling_keeps_collinearity_in_rcond():
     # scaling removes the column-norm spread from rcond, not near-dependence:
     # collinear columns (eps=1e-6) give rcond ~3e-13 either way
     A, b = collinear_ls(1e-6)
-    _, info = ls_solvers.solve_cholmod(A, b)
+    _, info = ls_solvers.solve_cholmod(A, b, scale_columns=False)
     _, info_s = ls_solvers.solve_cholmod(A, b, scale_columns=True)
     assert info_s['rcond'] < 1e-12
     assert 0.1 < info_s['rcond'] / info['rcond'] < 10

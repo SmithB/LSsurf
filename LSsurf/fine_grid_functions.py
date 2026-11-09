@@ -5,11 +5,12 @@ Functions to add fine-resolution grids that cover part of a smooth_fit domain
 
 Within a region (e.g. a set of rifts), the model is
     z = z0(x,y) + dz(x,y,t) + z0_fine(x,y) + dz_fine(x,y,t),
-with dz_fine(x,y,t_ref) = 0.  The fine grids are fd_grids that span the
-region's bounding box, but only the nodes inside the region have columns in
-the model (see fd_grid.set_active_nodes).  Constraint equations are generated
-only for nodes in the region, and terms for nodes outside the region are
-dropped (lin_op.restrict_to_active), so the fine fields are pulled towards
+with dz_fine(x,y,t_ref) = 0.  Either field can also be refined alone, in which
+case the other fine field is left out of the model.  The fine grids are fd_grids
+that span the region's bounding box, but only the nodes inside the region have
+columns in the model (see fd_grid.set_active_nodes).  Constraint equations are
+generated only for nodes in the region, and terms for nodes outside the region
+are dropped (lin_op.restrict_to_active), so the fine fields are pulled towards
 zero at the edges of the region.
 
 The fine grids are specified with the smooth_fit fine_grid_args argument, a
@@ -21,14 +22,16 @@ dict with entries:
     region_threshold: interpolated mask values above this are in the region (default 0.5)
     spacing: node spacing for the fine grids (required).  Either a number (the
         horizontal spacing of both fine grids), or a dict, as for the smooth_fit
-        spacing argument, with entries 'z0' and 'dz' (horizontal spacings of
+        spacing argument, with entries 'z0' and/or 'dz' (horizontal spacings of
         z0_fine and dz_fine) and, optionally, 'dt' (time spacing of dz_fine,
-        default: the dz grid's time spacing)
+        default: the dz grid's time spacing).  Only the fields with a spacing
+        are refined: e.g. {'z0': 25} adds only z0_fine, and {'dz': 50} only dz_fine.
     buffer: distance by which the region is expanded (default 0)
     halo: number of nodes outside the region on which constraint equations
         are also centered (default 0)
     E_RMS: dict of constraint weights for the fine grids (required).  Any
-        combination of these entries may be given, with at least one for each grid:
+        combination of these entries may be given, with at least one for each
+        refined grid (entries for a grid that is not refined are errors):
             z0_fine: 'd2z0_dx2' (curvature), 'dz0_dx' (gradient), 'z0' (magnitude)
             dz_fine: 'd3z_dx2dt' (curvature of the rate), 'd2z_dxdt' (gradient
                 of the rate), 'd2z_dt2' (time curvature), 'dz' (magnitude)
@@ -43,9 +46,9 @@ dict with entries:
         fields
     error_res_scale: factors by which fine_grid_args_for_errors coarsens the
         z0_fine and dz_fine spacings for error calculations at reduced
-        resolution: a dict with 'z0' and 'dz' entries, a two-element list, or one
-        number (default: 4 for z0_fine, 2 for dz_fine).  smooth_fit itself does
-        not use it.
+        resolution: a dict with 'z0' and 'dz' entries (only those of the refined
+        grids are needed), a two-element list, or one number (default: 4 for
+        z0_fine, 2 for dz_fine).  smooth_fit itself does not use it.
 
 Error estimates for the fine grids are expensive.  As for the coarse grids
 in altimetryFit, they can be calculated in a separate run with coarser grids
@@ -65,9 +68,11 @@ smooth_fit outputs (in S['m'], and as 'sigma_'+key in S['E'] if errors are calcu
         fine fields trade off against each other, so their errors are
         correlated: use the errors of the totals for the full model.
     S['m']['z0'] and S['m']['dz'] are the coarse fields only.
+    Only the outputs of the refined fields are produced (e.g. no dz_fine,
+    dz_total_fine or dzdt_total_fine_lag{N} if only z0 is refined).
 
-Provides: read_region, region_node_mask, fine_grid_spacing, setup_fine_grids,
-    setup_fine_constraints, setup_fine_fit, parse_fine_grids,
+Provides: read_region, region_node_mask, fine_grid_spacing, fine_grid_names,
+    setup_fine_grids, setup_fine_constraints, setup_fine_fit, parse_fine_grids,
     setup_fine_total_ops, add_fine_to_averaging_ops, fine_constraint_names,
     fine_grid_args_for_errors, fine_errors_to_grid
 """
@@ -213,19 +218,28 @@ def fine_grid_spacing(spacing):
     ----------
     spacing : float or dict
         a number (the horizontal spacing of both fine grids), or a dict with
-        entries 'z0' and 'dz' (horizontal spacings) and, optionally, 'dt'
+        entries 'z0' and/or 'dz' (horizontal spacings) and, optionally, 'dt'.
+        A field without an entry (or with None) is not refined.
 
     Returns
     -------
-    dict with entries 'z0', 'dz', and 'dt' ('dt' is None if not specified)
+    dict with entries 'z0', 'dz', and 'dt' (None for a field that is not
+    refined, and for 'dt' if not specified)
     '''
     if not isinstance(spacing, dict):
         return {'z0': spacing, 'dz': spacing, 'dt': None}
     unknown = set(spacing) - {'z0', 'dz', 'dt'}
-    if len(unknown) > 0 or 'z0' not in spacing or 'dz' not in spacing:
-        raise ValueError(f"fine-grid spacing must be a number or a dict with entries 'z0', 'dz' "
+    if len(unknown) > 0 or (spacing.get('z0') is None and spacing.get('dz') is None):
+        raise ValueError(f"fine-grid spacing must be a number or a dict with entries 'z0' and/or 'dz' "
                          f"and, optionally, 'dt'; got {spacing}")
-    return {'dt': None} | spacing
+    return {'z0': None, 'dz': None, 'dt': None} | spacing
+
+
+def fine_grid_names(grids):
+    '''
+    Names of the fine grids ('z0_fine', 'dz_fine') in a dict of grids
+    '''
+    return [name for name in ['z0_fine', 'dz_fine'] if name in grids]
 
 
 def region_rectangle(domain, region, spacing, buffer=0, threshold=0.5, field=None, pad=2):
@@ -269,7 +283,7 @@ def region_rectangle(domain, region, spacing, buffer=0, threshold=0.5, field=Non
 def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
                      buffer=0, threshold=0.5, field=None, pad=2, srs_proj4=None):
     '''
-    Define fine z0 and dz grids that cover a region within grids['z0']
+    Define fine z0 and/or dz grids that cover a region within grids['z0']
 
     Each fine grid spans the bounding box of the region, padded by 'pad' nodes,
     with nodes aligned with the lower-left corner of the domain.  Only the nodes
@@ -278,11 +292,12 @@ def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
     Parameters
     ----------
     grids : dict
-        grids from setup_grids.  The new grids are added as 'z0_fine' and 'dz_fine'
+        grids from setup_grids.  The new grids are added as 'z0_fine' and/or 'dz_fine'
     region : shapely geometry or pointCollection.grid.data
         region in which the fine grids are defined
     spacing : float or dict
-        node spacing of the fine grids (see fine_grid_spacing)
+        node spacing of the fine grids (see fine_grid_spacing).  Only the fields
+        with a spacing get a fine grid.
     reference_epoch : int
         epoch of grids['dz'] at which dz is zero
     col_0 : int
@@ -295,38 +310,43 @@ def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
 
     Returns
     -------
-    bool : True if the region contains nodes of both fine grids
+    bool : True if the region contains nodes of every requested fine grid
+        (otherwise no grids are added)
     '''
     spacing = fine_grid_spacing(spacing)
     rect = {}
     for name in ['z0', 'dz']:
+        if spacing[name] is None:
+            continue
         rect[name] = region_rectangle(grids['z0'], region, spacing[name], buffer=buffer,
                                       threshold=threshold, field=field, pad=pad)
         if rect[name][0] is None:
             return False
 
-    dt = spacing['dt']
-    if dt is None:
-        dt = grids['dz'].delta[2]
-    t_bds = grids['dz'].bds[2]
-    N_t = int(np.floor((t_bds[1]-t_bds[0])/dt+1.e-6))+1
-    t_ref = grids['dz'].ctrs[2][reference_epoch]
-
-    z0_f = fd_grid(rect['z0'][0], [spacing['z0']]*2, name='z0_fine', srs_proj4=srs_proj4)
-    dz_f = fd_grid(rect['dz'][0] + [[t_bds[0], t_bds[0]+(N_t-1)*dt]], [spacing['dz'], spacing['dz'], dt],
-                   name='dz_fine', srs_proj4=srs_proj4)
-    i_ref = np.argmin(np.abs(dz_f.ctrs[2]-t_ref))
-    if np.abs(dz_f.ctrs[2][i_ref]-t_ref) > 1.e-6*dt:
-        raise ValueError(f'setup_fine_grids: no dz_fine epoch at the reference time {t_ref}')
-    fixed = np.zeros(dz_f.shape, dtype=bool)
-    fixed[:, :, i_ref] = True
-
-    z0_f.set_active_nodes(rect['z0'][1], col_0=col_0)
-    dz_f.set_active_nodes(rect['dz'][1], fixed=fixed, col_0=z0_f.col_N)
-    for grid in [z0_f, dz_f]:
+    fine = {}
+    if 'z0' in rect:
+        fine['z0_fine'] = fd_grid(rect['z0'][0], [spacing['z0']]*2, name='z0_fine', srs_proj4=srs_proj4)
+        fine['z0_fine'].set_active_nodes(rect['z0'][1], col_0=col_0)
+        col_0 = fine['z0_fine'].col_N
+    if 'dz' in rect:
+        dt = spacing['dt']
+        if dt is None:
+            dt = grids['dz'].delta[2]
+        t_bds = grids['dz'].bds[2]
+        N_t = int(np.floor((t_bds[1]-t_bds[0])/dt+1.e-6))+1
+        t_ref = grids['dz'].ctrs[2][reference_epoch]
+        dz_f = fd_grid(rect['dz'][0] + [[t_bds[0], t_bds[0]+(N_t-1)*dt]], [spacing['dz'], spacing['dz'], dt],
+                       name='dz_fine', srs_proj4=srs_proj4)
+        i_ref = np.argmin(np.abs(dz_f.ctrs[2]-t_ref))
+        if np.abs(dz_f.ctrs[2][i_ref]-t_ref) > 1.e-6*dt:
+            raise ValueError(f'setup_fine_grids: no dz_fine epoch at the reference time {t_ref}')
+        fixed = np.zeros(dz_f.shape, dtype=bool)
+        fixed[:, :, i_ref] = True
+        dz_f.set_active_nodes(rect['dz'][1], fixed=fixed, col_0=col_0)
+        fine['dz_fine'] = dz_f
+    for name, grid in fine.items():
         grid.cell_area = calc_cell_area(grid)*grid.region_mask
-    grids['z0_fine'] = z0_f
-    grids['dz_fine'] = dz_f
+        grids[name] = grid
     return True
 
 
@@ -336,38 +356,39 @@ def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=0):
 
     E_RMS may have entries 'd2z0_dx2', 'dz0_dx', 'z0' (for z0_fine) and
     'd3z_dx2dt', 'd2z_dxdt', 'd2z_dt2', 'dz' (for dz_fine), with the same
-    meaning as in setup_smoothness_constraints.  Each equation is centered on a
-    node in the region, and nodes outside the region enter the equations as
-    zero.  If halo > 0, equations are also centered on nodes up to 'halo' nodes
-    outside the region, which adds weight to the zero boundary condition.
+    meaning as in setup_smoothness_constraints.  Entries for a fine grid that
+    is not in grids are errors.  Each equation is centered on a node in the
+    region, and nodes outside the region enter the equations as zero.  If
+    halo > 0, equations are also centered on nodes up to 'halo' nodes outside
+    the region, which adds weight to the zero boundary condition.
 
     Outputs:
     None (appends to constraint_op_list)
     '''
-    z0_f, dz_f = [grids['z0_fine'], grids['dz_fine']]
-    root_delta_A = np.sqrt(np.prod(z0_f.delta))
-    root_delta_V = np.sqrt(np.prod(dz_f.delta))
-    center_mask = {grid.name: grid.region_mask for grid in [z0_f, dz_f]}
+    center_mask = {name: grids[name].region_mask for name in fine_grid_names(grids)}
     if halo > 0:
         from scipy.ndimage import binary_dilation
         center_mask = {name: binary_dilation(mask, iterations=halo) for name, mask in center_mask.items()}
 
-    # constraint key: (operator name, grid, operator method, extra arguments)
+    # constraint key: (operator name, grid name, operator method, extra arguments)
     constraint_types = {
-        'd2z0_dx2': ('grad2_z0_fine', z0_f, 'grad2', {'DOF': 'z0_fine'}),
-        'dz0_dx': ('grad_z0_fine', z0_f, 'grad', {'DOF': 'z0_fine'}),
-        'z0': ('mag_z0_fine', z0_f, 'one', {'DOF': 'z0_fine'}),
-        'd3z_dx2dt': ('grad2_dzdt_fine', dz_f, 'grad2_dzdt', {'DOF': 'dz_fine', 't_lag': 1}),
-        'd2z_dxdt': ('grad_dzdt_fine', dz_f, 'grad_dzdt', {'DOF': 'dz_fine', 't_lag': 1}),
-        'd2z_dt2': ('d2z_dt2_fine', dz_f, 'd2z_dt2', {'DOF': 'dz_fine'}),
-        'dz': ('mag_dz_fine', dz_f, 'one', {'DOF': 'dz_fine'})}
-    for key, (name, grid, method, kwargs) in constraint_types.items():
+        'd2z0_dx2': ('grad2_z0_fine', 'z0_fine', 'grad2', {'DOF': 'z0_fine'}),
+        'dz0_dx': ('grad_z0_fine', 'z0_fine', 'grad', {'DOF': 'z0_fine'}),
+        'z0': ('mag_z0_fine', 'z0_fine', 'one', {'DOF': 'z0_fine'}),
+        'd3z_dx2dt': ('grad2_dzdt_fine', 'dz_fine', 'grad2_dzdt', {'DOF': 'dz_fine', 't_lag': 1}),
+        'd2z_dxdt': ('grad_dzdt_fine', 'dz_fine', 'grad_dzdt', {'DOF': 'dz_fine', 't_lag': 1}),
+        'd2z_dt2': ('d2z_dt2_fine', 'dz_fine', 'd2z_dt2', {'DOF': 'dz_fine'}),
+        'dz': ('mag_dz_fine', 'dz_fine', 'one', {'DOF': 'dz_fine'})}
+    for key, (name, grid_name, method, kwargs) in constraint_types.items():
         if E_RMS.get(key) is None:
             continue
-        op = getattr(lin_op(grid, name=name), method)(center_mask=center_mask[grid.name], **kwargs)
+        if grid_name not in grids:
+            raise ValueError(f'setup_fine_constraints: E_RMS entry {key} is for {grid_name}, which is not refined')
+        grid = grids[grid_name]
+        op = getattr(lin_op(grid, name=name), method)(center_mask=center_mask[grid_name], **kwargs)
         op.restrict_to_active()
-        root_delta = root_delta_A if grid is z0_f else root_delta_V
-        op.expected = np.zeros(op.N_eq) + E_RMS[key]/root_delta
+        # scale by the root of the cell area (z0_fine) or volume (dz_fine)
+        op.expected = np.zeros(op.N_eq) + E_RMS[key]/np.sqrt(np.prod(grid.delta))
         constraint_op_list.append(op)
 
 
@@ -385,7 +406,7 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
     data : pointCollection.data
         data for the fit
     grids : dict
-        grids for the fit.  'z0_fine' and 'dz_fine' are added
+        grids for the fit.  'z0_fine' and/or 'dz_fine' are added
     G_data : LSsurf.lin_op
         data-fitting operator
     constraint_op_list : list
@@ -411,9 +432,16 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
     unknown = set(args['E_RMS']) - set(fine_z0_constraint_keys + fine_dz_constraint_keys)
     if len(unknown) > 0:
         raise ValueError(f'setup_fine_fit: unknown fine_grid_args["E_RMS"] entries: {sorted(unknown)}')
-    # nodes without data are determined only by the constraints, so each grid needs at least one
+    spacing = fine_grid_spacing(args['spacing'])
+    # nodes without data are determined only by the constraints, so each refined grid needs at least
+    # one, and constraints for a grid that is not refined are probably a mistake
     for name, keys in [('z0_fine', fine_z0_constraint_keys), ('dz_fine', fine_dz_constraint_keys)]:
-        if not any(args['E_RMS'].get(key) is not None for key in keys):
+        given = [key for key in keys if args['E_RMS'].get(key) is not None]
+        if spacing[name.replace('_fine', '')] is None:
+            if len(given) > 0:
+                raise ValueError(f'setup_fine_fit: fine_grid_args["E_RMS"] entries {given} are for {name}, '
+                                 f'but fine_grid_args["spacing"] does not refine {name.replace("_fine", "")}')
+        elif len(given) == 0:
             raise ValueError(f'setup_fine_fit: fine_grid_args["E_RMS"] needs at least one of {keys} '
                              f'to constrain {name}')
 
@@ -421,8 +449,7 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
     if region is None:
         if args['region_file'] is None:
             raise ValueError('setup_fine_fit: fine_grid_args must specify region or region_file')
-        spacing = fine_grid_spacing(args['spacing'])
-        pad = args['buffer'] + 4*np.maximum(spacing['z0'], spacing['dz'])
+        pad = args['buffer'] + 4*np.max([spacing[key] for key in ['z0', 'dz'] if spacing[key] is not None])
         region = read_region(args['region_file'], srs_proj4=srs_proj4,
                              bounds=[grids['z0'].bds[1]+np.array([-pad, pad]),
                                      grids['z0'].bds[0]+np.array([-pad, pad])],
@@ -430,10 +457,12 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
     if not setup_fine_grids(grids, region, args['spacing'], reference_epoch, G_data.col_N,
                             buffer=args['buffer'], threshold=args['region_threshold'],
                             field=args['region_field'], pad=2+args['halo'], srs_proj4=srs_proj4):
-        print('setup_fine_fit: the region contains no z0_fine or no dz_fine nodes, no fine grids added')
+        print('setup_fine_fit: the region contains no nodes of a requested fine grid, no fine grids added')
         return False
 
     for name, coords in [('z0_fine', ['y', 'x']), ('dz_fine', ['y', 'x', 'time'])]:
+        if name not in grids:
+            continue
         G_data.add(lin_op(grids[name], name='interp_'+name)
                    .interp_mtx(data.coords(coords), bounds_error=False)
                    .restrict_to_active(drop_rows=False))
@@ -447,9 +476,12 @@ def fine_grid_args_for_errors(fine_grid_args):
 
     Returns a copy of fine_grid_args with the z0_fine and dz_fine spacings
     multiplied by fine_grid_args['error_res_scale'] (default: 4 for z0_fine,
-    2 for dz_fine).  The time spacing is unchanged.  Map the resulting errors to
-    the fit's fine grids with fine_errors_to_grid.
+    2 for dz_fine).  The time spacing is unchanged, and fields that are not
+    refined stay unrefined.  Map the resulting errors to the fit's fine grids
+    with fine_errors_to_grid.
     '''
+    spacing = fine_grid_spacing(fine_grid_args['spacing'])
+    refined = [key for key in ['z0', 'dz'] if spacing[key] is not None]
     scale = fine_grid_args.get('error_res_scale')
     if scale is None:
         scale = {'z0': 4, 'dz': 2}
@@ -457,10 +489,10 @@ def fine_grid_args_for_errors(fine_grid_args):
         scale = {'z0': scale[0], 'dz': scale[1]}
     elif not isinstance(scale, dict):
         scale = {'z0': scale, 'dz': scale}
-    if set(scale) != {'z0', 'dz'}:
-        raise ValueError(f"fine_grid_args['error_res_scale'] needs entries 'z0' and 'dz', got {scale}")
-    spacing = fine_grid_spacing(fine_grid_args['spacing'])
-    return dict(fine_grid_args) | {'spacing': spacing | {key: spacing[key]*scale[key] for key in scale}}
+    if len(set(scale) - {'z0', 'dz'}) > 0 or any(key not in scale for key in refined):
+        raise ValueError(f"fine_grid_args['error_res_scale'] needs entries for the refined fields {refined}, "
+                         f"and only 'z0' and 'dz' entries; got {scale}")
+    return dict(fine_grid_args) | {'spacing': spacing | {key: spacing[key]*scale[key] for key in refined}}
 
 
 def fine_errors_to_grid(E, x, y, field=None, valid=None):
@@ -518,7 +550,7 @@ def parse_fine_grids(m0, grids, sigma=False):
     Nodes outside the region are NaN, and dz_fine is zero at the reference epoch.
     '''
     m = {}
-    for name in ['z0_fine', 'dz_fine']:
+    for name in fine_grid_names(grids):
         grid = grids[name]
         key = 'sigma_'+name if sigma else name
         m[key] = pc.grid.data().from_dict(
@@ -539,13 +571,15 @@ def setup_fine_total_ops(grids, col_N, dzdt_lags=None):
 
     Returns
     -------
-    dict of lin_ops:
+    dict of lin_ops, for the fields that are refined:
         'z0_total_fine' : z0 + z0_fine
         'dz_total_fine' : dz + dz_fine
         'dzdt_total_fine_lag{N}': time differences of dz_total_fine, for each N in dzdt_lags
     '''
     ops = {}
     for coarse, coords in [('z0', ['y', 'x']), ('dz', ['y', 'x', 'time'])]:
+        if coarse+'_fine' not in grids:
+            continue
         fine = grids[coarse+'_fine']
         name = coarse+'_total_fine'
         nodes = np.flatnonzero(fine.in_region.ravel())
@@ -566,7 +600,7 @@ def setup_fine_total_ops(grids, col_N, dzdt_lags=None):
         op.dst_ind0 = nodes
         ops[name] = op
 
-    if dzdt_lags is None:
+    if dzdt_lags is None or 'dz_total_fine' not in ops:
         return ops
     dz_op = ops['dz_total_fine']
     fine = grids['dz_fine']
@@ -640,16 +674,18 @@ def add_fine_to_averaging_ops(averaging_ops, grids):
     Add the fine-grid contributions to averaging operators built on the coarse grids
 
     For each operator in averaging_ops whose grid is grids['z0'] or grids['dz'],
-    entries are added so that the operator applies the same weights to the fine
-    field (spread onto the coarse nodes by fine_to_coarse_matrix) as to the
-    coarse field.  Averages over an area then include the area integral of the
-    fine field, and operators that sample single coarse nodes (e.g. dzdt_lag)
-    include the local, basis-function-weighted mean of the fine field.
+    and whose field is refined, entries are added so that the operator applies
+    the same weights to the fine field (spread onto the coarse nodes by
+    fine_to_coarse_matrix) as to the coarse field.  Averages over an area then
+    include the area integral of the fine field, and operators that sample
+    single coarse nodes (e.g. dzdt_lag) include the local, basis-function-weighted
+    mean of the fine field.
     '''
     P = {}
     for op in averaging_ops.values():
         if op.grid is None or op.grid.name not in ('z0', 'dz') \
-                or op.grid is not grids[op.grid.name] or op.v.size == 0:
+                or op.grid is not grids[op.grid.name] or op.v.size == 0 \
+                or op.grid.name+'_fine' not in grids:
             continue
         coarse = op.grid
         fine = grids[coarse.name+'_fine']

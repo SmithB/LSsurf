@@ -130,14 +130,43 @@ def test_fine_E_RMS_validation():
                            ({'d2z0_dx2': 1., 'd3z_dx2dt': 0.3, 'd2z0dx2': 1.}, 'unknown')]:
         with pytest.raises(ValueError, match=message):
             fgf.setup_fine_fit(None, grids, None, [], {'region': region, 'spacing': 50, 'E_RMS': E_RMS}, 2)
+    # with one field refined, its grid needs a constraint, and the other field's entries are errors
+    for spacing, E_RMS, message in [({'z0': 50}, {'d3z_dx2dt': 0.3}, 'z0_fine'),
+                                    ({'z0': 50}, {'d2z0_dx2': 1., 'd3z_dx2dt': 0.3}, 'does not refine dz'),
+                                    ({'dz': 100}, {}, 'dz_fine'),
+                                    ({'dz': 100}, {'d2z0_dx2': 1., 'd3z_dx2dt': 0.3}, 'does not refine z0')]:
+        with pytest.raises(ValueError, match=message):
+            fgf.setup_fine_fit(None, grids, None, [], {'region': region, 'spacing': spacing, 'E_RMS': E_RMS}, 2)
 
 
 def test_fine_grid_spacing():
     assert fgf.fine_grid_spacing(50) == {'z0': 50, 'dz': 50, 'dt': None}
     assert fgf.fine_grid_spacing({'z0': 50, 'dz': 100}) == {'z0': 50, 'dz': 100, 'dt': None}
-    for bad in [{'z0': 50}, {'z0': 50, 'dz': 100, 'x': 1}]:
+    # one field alone can be refined
+    assert fgf.fine_grid_spacing({'z0': 50}) == {'z0': 50, 'dz': None, 'dt': None}
+    assert fgf.fine_grid_spacing({'dz': 100, 'dt': 0.25}) == {'z0': None, 'dz': 100, 'dt': 0.25}
+    for bad in [{}, {'dt': 0.25}, {'z0': None, 'dz': None}, {'z0': 50, 'dz': 100, 'x': 1}]:
         with pytest.raises(ValueError):
             fgf.fine_grid_spacing(bad)
+
+
+@pytest.mark.parametrize('spacing, name', [({'z0': 50}, 'z0_fine'), ({'dz': 100, 'dt': 0.25}, 'dz_fine')])
+def test_single_fine_grid_setup(spacing, name):
+    # only the refined field gets a fine grid, and its columns follow the coarse grids
+    grids, region = make_grids(spacing=spacing)
+    assert fgf.fine_grid_names(grids) == [name]
+    assert grids[name].col_0 == grids['dz'].col_N
+    assert np.all(grids[name].delta[0:2] == spacing[name[0:2]])
+    assert np.array_equal(grids[name].region_mask, fgf.region_node_mask(grids[name], region))
+    # constraints are only accepted for the refined grid
+    ops = []
+    E_RMS = {'d2z0_dx2': 1.} if name == 'z0_fine' else {'d3z_dx2dt': 0.3, 'd2z_dt2': 100.}
+    fgf.setup_fine_constraints(grids, ops, E_RMS)
+    assert all(np.all(op.c >= grids[name].col_0) and np.all(op.c < grids[name].col_N) for op in ops)
+    with pytest.raises(ValueError, match='not refined'):
+        fgf.setup_fine_constraints(grids, [], {'d2z0_dx2': 1., 'd3z_dx2dt': 0.3})
+    # the parsed model has only the refined field
+    assert list(fgf.parse_fine_grids(np.zeros(grids[name].col_N), grids)) == [name]
 
 
 def test_region_mask_inputs(tmp_path):
@@ -287,6 +316,43 @@ def test_fine_fit(spacing, E_RMS_z0):
     assert 'grad2_dzdt_fine' in S_f['RMS']
 
 
+@pytest.mark.parametrize('spacing, E_RMS', [({'z0': 50}, {'d2z0_dx2': 1.0}),
+                                             ({'dz': 50}, {'d3z_dx2dt': 0.3, 'd2z_dt2': 100})])
+def test_single_fine_fit(spacing, E_RMS):
+    # refining only z0 or only dz: the fit runs, gives outputs only for the refined field, and does not
+    # degrade the fit outside the region
+    region = shapely.LineString([(-1200, -560), (1200, 160)]).buffer(300)
+    name = 'z0_fine' if 'z0' in spacing else 'dz_fine'
+    other = 'dz_fine' if name == 'z0_fine' else 'z0_fine'
+    S_c = run_fine_fit()
+    S_f = run_fine_fit({'region': region, 'spacing': spacing, 'E_RMS': E_RMS}, compute_E=True)
+    m, E, grids = S_f['m'], S_f['E'], S_f['grids']
+    assert fgf.fine_grid_names(grids) == [name]
+    total = name.replace('_fine', '_total_fine')
+    other_total = other.replace('_fine', '_total_fine')
+    for key in [name, total]:
+        assert key in m and 'sigma_'+key in E
+    for key in [other, other_total, 'dzdt_total_fine_lag1']:
+        if key == 'dzdt_total_fine_lag1' and name == 'dz_fine':
+            assert key in m
+            continue
+        assert key not in m and 'sigma_'+key not in E
+    err = {}
+    for label, S in [('coarse', S_c), ('fine', S_f)]:
+        D = S['data']
+        in_region = shapely.contains_xy(region, D.x, D.y)
+        e = D.z_est - z_true(D.x, D.y, D.time)
+        err[label] = [np.sqrt(np.mean(e[ii]**2)) for ii in [in_region, ~in_region]]
+    # either field alone fits part of the time-varying rift (both together fit it better, see test_fine_fit)
+    assert err['fine'][0] < 0.7*err['coarse'][0]
+    assert err['fine'][1] < 1.1*err['coarse'][1]
+    # the whole-domain dz average includes dz_fine only if dz is refined
+    A_c = grids['dz'].cell_area
+    coarse_mean = np.sum(A_c*m['dz'].dz[:, :, 8])/np.sum(A_c)
+    fine_mean = np.nansum(grids['dz_fine'].cell_area*m['dz_fine'].dz_fine[:, :, 8])/np.sum(A_c) if name == 'dz_fine' else 0
+    assert np.isclose(m['whole_avg_dz'].whole_avg_dz.ravel()[8], coarse_mean + fine_mean, atol=1.e-6)
+
+
 def test_fine_grid_args_for_errors():
     args = {'region': None, 'spacing': {'z0': 50, 'dz': 100, 'dt': 0.25}, 'E_RMS': {}}
     assert fgf.fine_grid_args_for_errors(args)['spacing'] == {'z0': 200, 'dz': 200, 'dt': 0.25}
@@ -297,6 +363,10 @@ def test_fine_grid_args_for_errors():
     assert args['spacing'] == {'z0': 50, 'dz': 100, 'dt': 0.25}
     with pytest.raises(ValueError):
         fgf.fine_grid_args_for_errors(args | {'error_res_scale': {'z0': 4}})
+    # a field that is not refined stays unrefined, and needs no scale factor
+    assert fgf.fine_grid_args_for_errors(args | {'spacing': {'z0': 25}})['spacing'] == {'z0': 100, 'dz': None, 'dt': None}
+    assert fgf.fine_grid_args_for_errors(args | {'spacing': {'z0': 25}, 'error_res_scale': {'z0': 2}})['spacing']['z0'] == 50
+    assert fgf.fine_grid_args_for_errors(args | {'spacing': {'dz': 50, 'dt': 0.25}})['spacing'] == {'z0': None, 'dz': 100, 'dt': 0.25}
 
 
 def test_fine_errors_to_grid():

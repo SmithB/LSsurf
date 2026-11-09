@@ -31,7 +31,7 @@ from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.fine_grid_functions import setup_fine_fit, parse_fine_grids, \
                                         setup_fine_total_ops, add_fine_to_averaging_ops, \
-                                        fine_constraint_names
+                                        fine_constraint_names, fine_grid_names
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
 from LSsurf.calc_sigma_extra import calc_sigma_extra, calc_sigma_extra_on_grid
 from threadpoolctl import threadpool_limits
@@ -299,7 +299,7 @@ def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, av
                                     'time':grids['dz'].ctrs[2],\
                                     'sigma_dz': np.reshape(E0[Gc.TOC['cols']['dz']], grids['dz'].shape)})
 
-    if 'z0_fine' in grids:
+    if fine_grid_names(grids):
         E.update(parse_fine_grids(E0, grids, sigma=True))
 
     # generate the lagged dz errors
@@ -352,7 +352,7 @@ def parse_model(m, m0, data, R, RMS, G_data, averaging_ops, Gc, Ec, grids, bias_
     if 'PS_bias' in G_data.TOC['cols']:
         m['dz'].assign({'PS_bias':np.reshape(m0[G_data.TOC['cols']['PS_bias']], grids['dz'].shape[0:2])})
 
-    if 'z0_fine' in grids:
+    if fine_grid_names(grids):
         m.update(parse_fine_grids(m0, grids))
 
     # calculate height rates and averages
@@ -428,7 +428,7 @@ def setup_all_averaging_ops(grids, G_data, args):
     # setup masked averaging ops
     averaging_ops.update(
         setup_avg_mask_ops(grids['dz'], G_data.col_N, args['avg_masks'], args['dzdt_lags']))
-    if 'z0_fine' in grids:
+    if fine_grid_names(grids):
         if args['fine_grid_args'].get('add_to_coarse_averages', True):
             add_fine_to_averaging_ops(averaging_ops, grids)
         # coarse + fine model on the fine grids

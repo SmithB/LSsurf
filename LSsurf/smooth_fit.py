@@ -488,7 +488,7 @@ def smooth_fit(**kwargs):
     'fine_grid_args':None,
     'THREADS':1,
     'solver':'spqr',
-    'cholmod_scale_columns':False,
+    'cholmod_scale_columns':True,
     'cholmod_cache_ordering':False,
     'VERBOSE': True,
     'DEBUG': False}

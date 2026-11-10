@@ -77,13 +77,17 @@ class lin_op:
         self.v=self.v.ravel()
         return self
 
-    def diff_op(self, delta_subs, vals,  which_nodes=None, valid_equations_only=True):
+    def diff_op(self, delta_subs, vals,  which_nodes=None, valid_equations_only=True,
+                center_mask=None):
         # build an operator that calculates linear combination of the surrounding
         # values at each node of a grid.
         # A template, given by delta_subs and vals contains a list of offsets
         # in each direction of the grid, and a list of values corresponding
         # to each offset.  Only those nodes for which the template falls
         # entirely inside the grid are included in the operator
+        # If center_mask is specified, it is a boolean array matching the leading
+        # dimensions of the grid (e.g. a 2-D mask for a 3-D grid), and equations
+        # are only generated for centers where it is True
 
         if valid_equations_only:
             # compute the maximum and minimum offset in each dimension.  These
@@ -99,8 +103,21 @@ class lin_op:
         #generate the center-node indices for each calculation
         # if in dimension k, min_delta=-a and max_delta = +b, the number of indices is N,
         # then the first valid center is a and the last is N-b
-        sub0s=np.meshgrid(*[np.arange(np.maximum(0, -min_delta), np.minimum(Ni, Ni-max_delta)) for Ni, min_delta, max_delta in zip(self.grid.shape, min_deltas, max_deltas)], indexing='ij')
-        sub0s=[sub.ravel() for sub in sub0s]
+        sub_ranges=[np.arange(np.maximum(0, -min_delta), np.minimum(Ni, Ni-max_delta)) for Ni, min_delta, max_delta in zip(self.grid.shape, min_deltas, max_deltas)]
+        if center_mask is None:
+            sub0s=np.meshgrid(*sub_ranges, indexing='ij')
+            sub0s=[sub.ravel() for sub in sub0s]
+        else:
+            # centers in the mask for the leading dimensions, crossed with the
+            # ranges for the trailing dimensions (in the same order as above)
+            n_lead=center_mask.ndim
+            lead_mask=np.zeros(self.grid.shape[0:n_lead], dtype=bool)
+            lead_mask[np.ix_(*sub_ranges[0:n_lead])]=True
+            lead_subs=np.nonzero(lead_mask & center_mask)
+            trail_subs=[sub.ravel() for sub in np.meshgrid(*sub_ranges[n_lead:], indexing='ij')]
+            N_trail=trail_subs[0].size if len(trail_subs) > 0 else 1
+            sub0s=[np.repeat(sub, N_trail) for sub in lead_subs] + \
+                [np.tile(sub, lead_subs[0].size) for sub in trail_subs]
         if which_nodes is not None:
             temp_mask=np.isin(self.grid.global_ind(sub0s), which_nodes)
             sub0s=[temp[temp_mask] for temp in sub0s]
@@ -246,27 +263,27 @@ class lin_op:
         self.__update_size_and_shape__()
         return self
 
-    def one(self, DOF='z', which_nodes=None):
+    def one(self, DOF='z', which_nodes=None, center_mask=None):
         self.diff_op([[0]]*len(self.grid.shape), np.array([1.]),
-                     which_nodes=which_nodes)
+                     which_nodes=which_nodes, center_mask=center_mask)
         self.__update_size_and_shape__()
         return self
 
-    def grad(self, DOF='z'):
+    def grad(self, DOF='z', center_mask=None):
         ops=[]
         ops.append(
-            lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), np.array([-1., 1.])/self.grid.delta[0]))
+            lin_op(self.grid, name='d'+DOF+'_dy').diff_op(([-1, 0],[0, 0]), np.array([-1., 1.])/self.grid.delta[0], center_mask=center_mask))
         if len(self.grid.delta) > 1:
             ops.append(
-                lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), np.array([-1., 1.])/self.grid.delta[1]))
+                lin_op(self.grid, name='d'+DOF+'_dx').diff_op(([0, 0],[-1, 0]), np.array([-1., 1.])/self.grid.delta[1], center_mask=center_mask))
         self.vstack(ops)
         self.__update_size_and_shape__()
         return self
 
-    def grad_dzdt(self, DOF='z', t_lag=1):
+    def grad_dzdt(self, DOF='z', t_lag=1, center_mask=None):
         coeffs=np.array([-1., 1., 1., -1.])/(t_lag*self.grid.delta[0]*self.grid.delta[2])
-        d2zdxdt=lin_op(self.grid, name='d2'+DOF+'_dxdt').diff_op(([ 0, 0,  0, 0], [-1, 0, -1, 0], [-t_lag, -t_lag, 0, 0]), coeffs)
-        d2zdydt=lin_op(self.grid, name='d2'+DOF+'_dydt').diff_op(([-1, 0, -1, 0], [ 0, 0,  0, 0], [-t_lag, -t_lag, 0, 0]), coeffs)
+        d2zdxdt=lin_op(self.grid, name='d2'+DOF+'_dxdt').diff_op(([ 0, 0,  0, 0], [-1, 0, -1, 0], [-t_lag, -t_lag, 0, 0]), coeffs, center_mask=center_mask)
+        d2zdydt=lin_op(self.grid, name='d2'+DOF+'_dydt').diff_op(([-1, 0, -1, 0], [ 0, 0,  0, 0], [-t_lag, -t_lag, 0, 0]), coeffs, center_mask=center_mask)
         self.vstack((d2zdxdt, d2zdydt))
         self.__update_size_and_shape__()
         return self
@@ -286,28 +303,28 @@ class lin_op:
         self.update_dst_grid([0, 0, 0.5*lag*self.grid.delta[2]], np.array([1, 1, 1]))
         return self
 
-    def d2z_dt2(self, DOF='dz', t_lag=1):
+    def d2z_dt2(self, DOF='dz', t_lag=1, center_mask=None):
         coeffs=np.array([-1, 2, -1])/((t_lag*self.grid.delta[2])**2)
-        self.diff_op(([0,0,0], [0,0,0], [-t_lag, 0, t_lag]), coeffs)
+        self.diff_op(([0,0,0], [0,0,0], [-t_lag, 0, t_lag]), coeffs, center_mask=center_mask)
         self.__update_size_and_shape__()
         return self
 
-    def grad2(self, DOF='z'):
-        d2zdx2=lin_op(self.grid, name='d2'+DOF+'_dx2').diff_op(([0, 0, 0],[-1, 0, 1]), np.array([-1., 2., -1.])/self.grid.delta[1]**2)
-        d2zdy2=lin_op(self.grid, name='d2'+DOF+'_dy2').diff_op(([-1, 0, 1],[0, 0, 0]), np.array([-1., 2., -1.])/self.grid.delta[0]**2)
+    def grad2(self, DOF='z', center_mask=None):
+        d2zdx2=lin_op(self.grid, name='d2'+DOF+'_dx2').diff_op(([0, 0, 0],[-1, 0, 1]), np.array([-1., 2., -1.])/self.grid.delta[1]**2, center_mask=center_mask)
+        d2zdy2=lin_op(self.grid, name='d2'+DOF+'_dy2').diff_op(([-1, 0, 1],[0, 0, 0]), np.array([-1., 2., -1.])/self.grid.delta[0]**2, center_mask=center_mask)
         # lag-2 cross-derivative term needs a factor of 1/sqrt(2) to achieve the correct frequency response
-        d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 1/np.sqrt(2)*0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]*self.grid.delta[1]))
+        d2zdxdy=lin_op(self.grid, name='d2'+DOF+'_dxdy').diff_op(([-1, -1, 1,1],[-1, 1, -1, 1]), 1/np.sqrt(2)*0.5*np.array([-1., 1., 1., -1])/(self.grid.delta[0]*self.grid.delta[1]), center_mask=center_mask)
         self.vstack((d2zdx2, d2zdy2, d2zdxdy))
         self.__update_size_and_shape__()
         return self
 
-    def grad2_dzdt(self, DOF='z', t_lag=1):
+    def grad2_dzdt(self, DOF='z', t_lag=1, center_mask=None):
         coeffs=np.array([-1., 2., -1., 1., -2., 1.])/(t_lag*self.grid.delta[0]**2.*self.grid.delta[2])
-        d3zdx2dt=lin_op(self.grid, name='d3'+DOF+'_dx2dt').diff_op(([0, 0, 0, 0, 0, 0],[-1, 0, 1, -1, 0, 1], [-t_lag,-t_lag,-t_lag, 0, 0, 0]), coeffs)
-        d3zdy2dt=lin_op(self.grid, name='d3'+DOF+'_dy2dt').diff_op(([-1, 0, 1, -1, 0, 1], [0, 0, 0, 0, 0, 0], [-t_lag, -t_lag, -t_lag, 0, 0, 0]), coeffs)
+        d3zdx2dt=lin_op(self.grid, name='d3'+DOF+'_dx2dt').diff_op(([0, 0, 0, 0, 0, 0],[-1, 0, 1, -1, 0, 1], [-t_lag,-t_lag,-t_lag, 0, 0, 0]), coeffs, center_mask=center_mask)
+        d3zdy2dt=lin_op(self.grid, name='d3'+DOF+'_dy2dt').diff_op(([-1, 0, 1, -1, 0, 1], [0, 0, 0, 0, 0, 0], [-t_lag, -t_lag, -t_lag, 0, 0, 0]), coeffs, center_mask=center_mask)
         # lag-1 cross-derivative term needs a sqrt(2) multiplier to achieve the correct frequency response.
         coeffs=np.sqrt(2)*np.array([-1., 1., 1., -1., 1., -1., -1., 1.])/(self.grid.delta[0]**2*self.grid.delta[2])
-        d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-t_lag, -t_lag, -t_lag, -t_lag, 0, 0, 0, 0]),  coeffs)
+        d3zdxdydt=lin_op(self.grid, name='d3'+DOF+'_dxdydt').diff_op(([-1, 0, -1, 0, -1, 0, -1, 0], [-1, -1, 0, 0, -1, -1, 0, 0], [-t_lag, -t_lag, -t_lag, -t_lag, 0, 0, 0, 0]),  coeffs, center_mask=center_mask)
         self.vstack((d3zdx2dt, d3zdy2dt, d3zdxdydt))
         self.__update_size_and_shape__()
         return self
@@ -552,7 +569,8 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        E=np.zeros(self.col_N)+np.nan
+        # size E by the output grid, as in grid_prod
+        E=np.zeros(grid.col_N+1)+np.nan
         E[ind0]=np.sqrt((self.toCSR(row_N=ind0.size, col_N=Rinv.shape[0]).dot(Rinv)).power(2).sum(axis=1)).ravel()
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
@@ -577,7 +595,8 @@ class lin_op:
             ind0=self.ind0
         else:
             ind0=self.dst_ind0
-        E=np.zeros(self.col_N)+np.nan
+        # size E by the output grid, as in grid_prod
+        E=np.zeros(grid.col_N+1)+np.nan
         E[ind0]=np.sqrt(E_sq)
         return E[grid.col_0:grid.col_N].reshape(grid.shape)
 
@@ -758,6 +777,47 @@ class lin_op:
             csr[row,inds] = temp.ravel()*mask_sub
         temp=csr.tocoo()
         self.r, self.c, self.v=[temp.row, temp.col, temp.data]
+        return self
+
+    def restrict_to_active(self, grid=None, drop_rows=True):
+        """
+        Restrict an operator to the active nodes of its grid.
+
+        The operator is built on the grid's full rectangle (see
+        fd_grid.set_active_nodes).  Entries for inactive nodes are dropped, so
+        those nodes are treated as zero, and the columns for the active nodes are
+        mapped to the grid's compact columns.
+
+        Inputs:
+            grid: fd_grid with active nodes.  If None, self.grid is used.
+            drop_rows: if True, rows with no remaining entries are removed, and the
+                remaining rows are renumbered (use False for data rows, e.g. from
+                interp_mtx)
+        """
+        if grid is None:
+            grid=self.grid
+        r, c, v = [self.r.ravel().astype(int), self.c.ravel().astype(int), self.v.ravel()]
+        ind=c-grid.col_0
+        keep=(v != 0) & (ind >= 0) & (ind < grid.N_nodes)
+        c_active=np.zeros_like(c)-1
+        c_active[keep]=grid.col_map[ind[keep]]
+        keep &= c_active >= 0
+        if drop_rows:
+            N_eq=int(self.N_eq)
+            row_ok=np.zeros(N_eq, dtype=bool)
+            row_ok[np.unique(r[keep]-self.row_0)]=True
+            row_map=np.zeros(N_eq, dtype=int)-1
+            row_map[row_ok]=np.arange(row_ok.sum())
+            r=self.row_0+row_map[r-self.row_0]
+            self.ind0=self.ind0[row_ok]
+            self.N_eq=int(row_ok.sum())
+            for key, rows in self.TOC['rows'].items():
+                rows=row_map[np.asarray(rows, dtype=int)]
+                self.TOC['rows'][key]=rows[rows >= 0]
+        self.r, self.c, self.v = [r[keep], c_active[keep], v[keep]]
+        self.col_N=grid.col_N
+        self.TOC['cols']={grid.name:np.arange(grid.col_0, grid.col_N)}
+        self.__update_size_and_shape__()
         return self
 
     def print_TOC(self):

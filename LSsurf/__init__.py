@@ -23,5 +23,10 @@ from LSsurf.calc_sigma_extra import calc_sigma_extra,\
     calc_sigma_extra_on_grid
 from LSsurf.unique_by_rows import unique_by_rows
 from LSsurf.match_priors import match_tile_edges, match_prior_dz
+from LSsurf.fine_grid_functions import read_region, region_node_mask, \
+                                    fine_grid_spacing, setup_fine_grids, setup_fine_fit, \
+                                    parse_fine_grids, setup_fine_total_ops, \
+                                    add_fine_to_averaging_ops, \
+                                    fine_grid_args_for_errors, fine_errors_to_grid
 from LSsurf.hermite_poly_fit import *
 

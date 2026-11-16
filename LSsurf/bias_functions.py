@@ -89,7 +89,10 @@ def setup_data_field_scale_fit(data, bias_model, G_data, constraint_ops_list, ar
         this_name = 'scale_'+field
         bias_model['E_'+this_name]={}
         expected_mag = getattr(data, 'E_'+this_name)
-        _, id_dict = pc.unique_by_rows(data.bias_ID, return_dict=True)
+        # unique_by_rows reshapes a 1-D input in place: give it a 2-D view, so
+        # that data.bias_ID stays 1-D (a 2-D bias_ID makes setup_bias_fit
+        # build an N x N column array)
+        _, id_dict = pc.unique_by_rows(np.reshape(data.bias_ID, (-1, 1)), return_dict=True)
         for id, ind in id_dict.items():
             bias_model['E_'+this_name][int(id[0])] = np.nanmedian(expected_mag[ind])
         setup_bias_fit(data, bias_model, G_data, constraint_ops_list,

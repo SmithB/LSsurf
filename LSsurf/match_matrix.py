@@ -15,6 +15,7 @@ from LSsurf.RDE import RDE
 from LSsurf.unique_by_rows import unique_by_rows
 import pointCollection as pc
 import re
+from LSsurf.match_priors import prior_reference_time
 
 def match_range(b0, b1):
     """
@@ -35,7 +36,10 @@ def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mappin
 
     inputs:
         str file: h5 file from which to read the data
-        float ref_epoch: Time value to which the saved dz model is referenced
+        int ref_epoch: index of the epoch of the saved dz model to which it is
+            referenced, used only if the reference epoch cannot be found from the
+            model itself (the epoch at which dz and sigma_dz are zero everywhere;
+            see match_priors.prior_reference_time)
         str group: group in the file in which the dz values are saved (default='dz')
         dict field_mapping: dict mapping between saved fields and fields 'dz and 'sigma_dz'
         dict skip: values to skip in xy and t (one field for each)
@@ -52,6 +56,8 @@ def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mappin
     else:
         temp=dz.copy()
         
+    # the saved model's own reference time
+    ref_time = prior_reference_time(temp, default=np.atleast_1d(temp.t)[ref_epoch])
     yc, xc, tc=[np.mean(getattr(temp, field)) for field in ('y','x','t')]
     yw, xw, tw=[np.diff(getattr(temp, field)[[0, -1]]) for field in ('y','x','t')]
     if file is not None:
@@ -66,7 +72,7 @@ def match_dz_op(grids, dz=None, file=None, ref_epoch=0, group='dz', field_mappin
     # first matrix interpolates the model to the fit values at the delta-z time
     m1 = lin_op(grids['dz'], name='interp_dz').interp_mtx((yg.ravel(), xg.ravel(), tg.ravel()))
     # second matrix interpolates the model to data's reference epoch.
-    m0 = lin_op(grids['dz'], name='interp_dz').interp_mtx((yg.ravel(), xg.ravel(), np.zeros_like(tg.ravel())+dz.t[ref_epoch]))
+    m0 = lin_op(grids['dz'], name='interp_dz').interp_mtx((yg.ravel(), xg.ravel(), np.zeros_like(tg.ravel())+ref_time))
     # invert the values of m1 (so that the reference epoch is subtracted)
     m0.v *= -1
     m1.add(m0)

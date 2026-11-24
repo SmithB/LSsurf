@@ -9,9 +9,11 @@ with dz_fine(x,y,t_ref) = 0.  Either field can also be refined alone, in which
 case the other fine field is left out of the model.  The fine grids are fd_grids
 that span the region's bounding box, but only the nodes inside the region have
 columns in the model (see fd_grid.set_active_nodes).  Constraint equations are
-generated only for nodes in the region, and terms for nodes outside the region
-are dropped (lin_op.restrict_to_active), so the fine fields are pulled towards
-zero at the edges of the region.
+centered on the nodes in the region (and, for some constraints, on a halo of
+nodes around it; see 'halo' below), and terms for nodes outside the region are
+dropped (lin_op.restrict_to_active), so the nodes outside the region act as
+zeros, and the constraints pull the fine fields towards zero at the edges of
+the region.
 
 The fine grids are specified with the smooth_fit fine_grid_args argument, a
 dict with entries:
@@ -28,7 +30,24 @@ dict with entries:
         are refined: e.g. {'z0': 25} adds only z0_fine, and {'dz': 50} only dz_fine.
     buffer: distance by which the region is expanded (default 0)
     halo: number of nodes outside the region on which constraint equations
-        are also centered (default 0)
+        are also centered, for every constraint, or None (default) for 1 for the
+        gradient constraints ('dz0_dx', 'd2z_dxdt') and 0 for the others.
+        The equations tie the fine fields to zero only where their stencils
+        reach across the edge of the region, so the halo needed depends on the
+        stencil:
+            gradient constraints ('dz0_dx', 'd2z_dxdt'): the stencils difference
+                each node with its -x and -y neighbours, so without a halo they
+                tie only the -x and -y edges of the region and leave the +x and
+                +y edges free.  A halo of 1 ties every edge.
+            curvature constraints ('d2z0_dx2', 'd3z_dx2dt'): the stencils are
+                centered, so every edge is tied without a halo.  A halo of 1
+                adds equations that penalize the values at the edge directly,
+                which, for a field that steps to zero at the edge, doubles the
+                penalty there (closer to a clamped edge).
+            'd2z_dt2', 'dz', 'z0': no horizontal extent; the halo has no effect.
+        The stencils reach one node, so a halo larger than 1 adds only a few
+        equations at diagonal corners (from the cross-derivative terms of the
+        curvature constraints).
     E_RMS: dict of constraint weights for the fine grids (required).  Any
         combination of these entries may be given, with at least one for each
         refined grid (entries for a grid that is not refined are errors):
@@ -86,8 +105,8 @@ smooth_fit outputs (in S['m'], and as 'sigma_'+key in S['E'] if errors are calcu
 Provides: read_region, region_node_mask, fine_grid_spacing, fine_grid_names,
     setup_fine_grids, setup_fine_constraints, setup_fine_fit, parse_fine_grids,
     setup_fine_total_ops, add_fine_to_averaging_ops, fine_constraint_names,
-    fine_grid_args_for_errors, fine_errors_to_grid, fine_region_data,
-    fine_sigma_extra_masks
+    fine_constraint_halo, fine_grid_args_for_errors, fine_errors_to_grid,
+    fine_region_data, fine_sigma_extra_masks
 """
 
 import os
@@ -100,7 +119,7 @@ from LSsurf.grid_functions import calc_cell_area
 
 fine_grid_arg_defaults = {'region': None, 'region_file': None, 'region_field': None,
                           'region_group': None, 'region_threshold': 0.5,
-                          'spacing': None, 'buffer': 0, 'halo': 0,
+                          'spacing': None, 'buffer': 0, 'halo': None,
                           'E_RMS': None, 'add_to_coarse_averages': True,
                           'error_res_scale': None, 'separate_sigma_extra': False}
 
@@ -110,6 +129,9 @@ fine_sigma_extra_min_size = 100
 # E_RMS keys for the fine-grid constraints
 fine_z0_constraint_keys = ['d2z0_dx2', 'dz0_dx', 'z0']
 fine_dz_constraint_keys = ['d3z_dx2dt', 'd2z_dxdt', 'd2z_dt2', 'dz']
+# constraints whose stencils difference each node with its -x and -y neighbours only
+# (lin_op.grad, lin_op.grad_dzdt): they need a halo of 1 to tie the +x and +y edges
+fine_one_sided_constraint_keys = ['dz0_dx', 'd2z_dxdt']
 
 # names of the fine-grid constraint equations, for reporting residuals
 fine_constraint_names = ['grad2_z0_fine', 'grad_z0_fine', 'mag_z0_fine',
@@ -366,7 +388,23 @@ def setup_fine_grids(grids, region, spacing, reference_epoch, col_0,
     return True
 
 
-def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=0):
+def fine_constraint_halo(key, halo=None):
+    '''
+    Halo (in nodes) of the fine-grid constraint with E_RMS entry 'key'
+
+    halo: the halo for every constraint, or None for the default: 1 for the
+        gradient constraints (fine_one_sided_constraint_keys), whose stencils
+        otherwise leave the +x and +y edges of the region free, and 0 for the
+        others (see the module docstring).
+    '''
+    if halo is None:
+        return 1 if key in fine_one_sided_constraint_keys else 0
+    if int(halo) != halo or halo < 0:
+        raise ValueError(f'fine-grid halo must be None or a non-negative integer, not {halo}')
+    return int(halo)
+
+
+def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=None):
     '''
     Setup smoothness constraints for the fine grids
 
@@ -374,17 +412,29 @@ def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=0):
     'd3z_dx2dt', 'd2z_dxdt', 'd2z_dt2', 'dz' (for dz_fine), with the same
     meaning as in setup_smoothness_constraints.  Entries for a fine grid that
     is not in grids are errors.  Each equation is centered on a node in the
-    region, and nodes outside the region enter the equations as zero.  If
-    halo > 0, equations are also centered on nodes up to 'halo' nodes outside
-    the region, which adds weight to the zero boundary condition.
+    region or, if the constraint's halo h is > 0, on a node up to h nodes
+    outside it (4-connected).  Nodes outside the region enter the equations as
+    zero, and equations that involve only such nodes are dropped.
+
+    halo: the halo of every constraint, or None (default): 1 for the gradient
+        constraints ('dz0_dx', 'd2z_dxdt'), which without a halo tie only the
+        -x and -y edges of the region to the zero outside, and 0 for the others,
+        whose stencils tie every edge (see fine_constraint_halo and the module
+        docstring).  The grids must be padded by at least the halo plus one
+        node around the region (setup_fine_grids pads by two by default).
 
     Outputs:
     None (appends to constraint_op_list)
     '''
-    center_mask = {name: grids[name].region_mask for name in fine_grid_names(grids)}
-    if halo > 0:
-        from scipy.ndimage import binary_dilation
-        center_mask = {name: binary_dilation(mask, iterations=halo) for name, mask in center_mask.items()}
+    from scipy.ndimage import binary_dilation
+    center_masks = {}
+
+    def center_mask(grid_name, h):
+        # the region, grown by h nodes
+        if (grid_name, h) not in center_masks:
+            mask = grids[grid_name].region_mask
+            center_masks[(grid_name, h)] = binary_dilation(mask, iterations=h) if h > 0 else mask
+        return center_masks[(grid_name, h)]
 
     # constraint key: (operator name, grid name, operator method, extra arguments)
     constraint_types = {
@@ -401,7 +451,8 @@ def setup_fine_constraints(grids, constraint_op_list, E_RMS, halo=0):
         if grid_name not in grids:
             raise ValueError(f'setup_fine_constraints: E_RMS entry {key} is for {grid_name}, which is not refined')
         grid = grids[grid_name]
-        op = getattr(lin_op(grid, name=name), method)(center_mask=center_mask[grid_name], **kwargs)
+        op = getattr(lin_op(grid, name=name), method)(
+            center_mask=center_mask(grid_name, fine_constraint_halo(key, halo)), **kwargs)
         op.restrict_to_active()
         # scale by the root of the cell area (z0_fine) or volume (dz_fine)
         op.expected = np.zeros(op.N_eq) + E_RMS[key]/np.sqrt(np.prod(grid.delta))
@@ -460,6 +511,9 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
         elif len(given) == 0:
             raise ValueError(f'setup_fine_fit: fine_grid_args["E_RMS"] needs at least one of {keys} '
                              f'to constrain {name}')
+    # pad the grids by two nodes beyond the widest halo of the constraints
+    halo_max = max([fine_constraint_halo(key, args['halo']) for key, val in args['E_RMS'].items()
+                    if val is not None], default=0)
 
     region = args['region']
     if region is None:
@@ -472,7 +526,7 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
                              field=args['region_field'], group=args['region_group'])
     if not setup_fine_grids(grids, region, args['spacing'], reference_epoch, G_data.col_N,
                             buffer=args['buffer'], threshold=args['region_threshold'],
-                            field=args['region_field'], pad=2+args['halo'], srs_proj4=srs_proj4):
+                            field=args['region_field'], pad=2+halo_max, srs_proj4=srs_proj4):
         print('setup_fine_fit: the region contains no nodes of a requested fine grid, no fine grids added')
         return False
 

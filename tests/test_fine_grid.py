@@ -122,6 +122,60 @@ def test_fine_constraint_choices(E_RMS):
         assert np.all(op.c >= grid.col_0) and np.all(op.c < grid.col_N)
 
 
+def edge_penalties(key, halo):
+    # constraint key on fine grids with a square region of 7 x 7 nodes, for a field that is uniform in the
+    # region (z0_fine) or has a uniform rate (dz_fine), and is zero outside.  Interior equations are zero
+    # for it, so the penalty comes from equations that reach across an edge; each edge gets the rows
+    # centered on or beyond it, without the corners.  Returns the number of equations and the penalties.
+    N, i0, i1 = 16, 4, 10
+    mask = np.zeros((N, N), bool)
+    mask[i0:i1+1, i0:i1+1] = True
+    z0f = fd_grid([[0, (N-1)*25.], [0, (N-1)*25.]], [25., 25.], name='z0_fine')
+    z0f.set_active_nodes(mask, col_0=0)
+    dzf = fd_grid([[0, (N-1)*25.], [0, (N-1)*25.], [0, 2.]], [25., 25., 0.25], name='dz_fine')
+    fixed = np.zeros(dzf.shape, bool)
+    fixed[:, :, 4] = True
+    dzf.set_active_nodes(mask, fixed=fixed, col_0=z0f.col_N)
+    m = np.ones(dzf.col_N)
+    it = np.unravel_index(np.flatnonzero(dzf.active.ravel()), dzf.shape)[2]
+    m[z0f.col_N:] = dzf.ctrs[2][it] - dzf.ctrs[2][4]
+    ops = []
+    fgf.setup_fine_constraints({'z0_fine': z0f, 'dz_fine': dzf}, ops, {key: 1.}, halo=halo)
+    grid = z0f if key in fgf.fine_z0_constraint_keys else dzf
+    r = ops[0].toCSR(col_N=dzf.col_N).dot(m)
+    iy, ix = np.unravel_index(ops[0].ind0 - grid.col_0, grid.shape)[0:2]
+    in_x, in_y = (ix > i0) & (ix < i1), (iy > i0) & (iy < i1)
+    sides = {'-x': (ix <= i0) & in_y, '+x': (ix >= i1) & in_y, '-y': (iy <= i0) & in_x, '+y': (iy >= i1) & in_x}
+    return ops[0].N_eq, {side: np.sum(r[ii]**2) for side, ii in sides.items()}
+
+
+def test_fine_halo():
+    # gradient constraints: without a halo, only the -x and -y edges are tied to the zero outside;
+    # the default (None) gives them a halo of 1, which ties every edge equally
+    for key in fgf.fine_one_sided_constraint_keys:
+        assert fgf.fine_constraint_halo(key) == 1
+        n0, p0 = edge_penalties(key, 0)
+        assert p0['+x'] == 0 and p0['+y'] == 0 and p0['-x'] > 0 and p0['-y'] > 0
+        n, p = edge_penalties(key, None)
+        assert (n, p) == edge_penalties(key, 1) and n > n0
+        assert all(np.isclose(p[side], p0['-x']) for side in p)
+    # the other constraints keep a halo of 0 by default; the curvature constraints tie every edge
+    # without a halo, and a halo of 1 doubles the edge penalty for this field
+    for key in ['d2z0_dx2', 'z0', 'd3z_dx2dt', 'd2z_dt2', 'dz']:
+        assert fgf.fine_constraint_halo(key) == 0
+        n0, p0 = edge_penalties(key, 0)
+        assert (n0, p0) == edge_penalties(key, None)
+        if key in ['d2z0_dx2', 'd3z_dx2dt']:
+            assert all(p0[side] > 0 and np.isclose(p0[side], p0['-x']) for side in p0)
+            n1, p1 = edge_penalties(key, 1)
+            assert n1 > n0 and all(np.isclose(p1[side], 2*p0[side]) for side in p0)
+    # an integer halo applies to every constraint
+    assert fgf.fine_constraint_halo('d3z_dx2dt', 2) == 2 and fgf.fine_constraint_halo('d2z_dxdt', 0) == 0
+    for bad in [-1, 0.5]:
+        with pytest.raises(ValueError):
+            fgf.fine_constraint_halo('dz0_dx', bad)
+
+
 def test_fine_E_RMS_validation():
     # each fine grid needs at least one constraint, and unknown entries are errors
     grids, region = make_grids()
@@ -288,6 +342,12 @@ def test_fine_fit(spacing, E_RMS_z0):
     m, E, grids = S_f['m'], S_f['E'], S_f['grids']
     for key in ['z0_fine', 'dz_fine', 'z0_total_fine', 'dz_total_fine', 'dzdt_total_fine_lag1']:
         assert key in m and 'sigma_'+key in E
+    # the grids are padded by two nodes beyond the widest constraint halo (by default 1 for gradient constraints)
+    pad = 3 if 'dz0_dx' in E_RMS_z0 else 2
+    for name in ['z0_fine', 'dz_fine']:
+        mask = grids[name].region_mask
+        assert [np.flatnonzero(mask.any(axis=1-dim))[0] for dim in [0, 1]] == [pad, pad]
+        assert [mask.shape[dim] - 1 - np.flatnonzero(mask.any(axis=1-dim))[-1] for dim in [0, 1]] == [pad, pad]
     in_reg = grids['dz_fine'].region_mask
     # dz_fine is zero at the reference epoch in the region, and NaN outside it
     assert np.all(m['dz_fine'].dz_fine[:, :, 4][in_reg] == 0)

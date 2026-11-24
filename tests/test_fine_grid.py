@@ -242,7 +242,7 @@ def z_true(x, y, t):
     return 20 + 1e-3*x + np.cos(2*np.pi*x/4000)*np.cos(2*np.pi*y/5000) - 0.5*t + rift(x, y, t)
 
 
-def run_fine_fit(fine_grid_args=None, compute_E=False):
+def run_fine_fit(fine_grid_args=None, compute_E=False, noisy_outside=None):
     # DEM-like data over a 4 km x 4 km domain at five times
     D = []
     for t in [0.1, 0.6, 1.1, 1.4, 1.9]:
@@ -250,6 +250,10 @@ def run_fine_fit(fine_grid_args=None, compute_E=False):
         D.append(pc.data().from_dict({'x': xg, 'y': yg, 'time': np.zeros_like(xg)+t, 'sigma': np.zeros_like(xg)+0.2}))
     data = pc.data().from_list(D)
     data.assign(z=z_true(data.x, data.y, data.time) + rng.normal(size=data.size)*data.sigma)
+    if noisy_outside is not None:
+        # 0.5 m of noise that sigma does not include, outside a region
+        out = ~shapely.contains_xy(noisy_outside, data.x, data.y)
+        data.z[out] += rng.normal(size=out.sum())*0.5
     whole = pc.grid.data().from_dict({'x': np.array([-3000., 3000]), 'y': np.array([-3000., 3000]), 'z': np.ones((2, 2))})
     E_RMS = {'d2z0_dx2': 0.02, 'dz0_dx': 50, 'd3z_dx2dt': 0.003, 'd2z_dxdt': 7.5, 'd2z_dt2': 5000}
     return smooth_fit(data=data, ctr={'x': 0., 'y': 0., 't': 1.}, W={'x': 4000., 'y': 4000., 't': 2.},
@@ -391,3 +395,50 @@ def test_fine_errors_to_grid():
     assert np.allclose(out[inside_coarse], expected[inside_coarse])
     # every valid node gets a value, and the others are NaN
     assert np.all(np.isfinite(out[valid])) and np.all(np.isnan(out[~valid]))
+
+
+def test_fine_region_data():
+    # one active dz_fine node at (200, 200): the data with a nonzero bilinear weight on it are in the region
+    grid = fd_grid([[0., 400.], [0., 400.], [0., 1.]], [100., 100., 0.5], name='dz_fine')
+    mask = np.zeros((5, 5), dtype=bool)
+    mask[2, 2] = True
+    grid.set_active_nodes(mask)
+    D = pc.data().from_dict({'x': np.array([200., 250., 299., 300., 101., 99., 200.]),
+                             'y': np.array([200., 290., 250., 200., 101., 200., 99.])})
+    assert np.array_equal(fgf.fine_region_data(D, {'dz_fine': grid}),
+                          [True, True, True, False, True, False, False])
+    assert not np.any(fgf.fine_region_data(D, {}))
+
+
+def test_fine_sigma_extra_masks():
+    fine = np.r_[np.ones(150, bool), np.zeros(250, bool)]
+    masks = {'a': np.ones(400, bool), 'b': np.r_[np.zeros(100, bool), np.ones(300, bool)]}
+    out = fgf.fine_sigma_extra_masks(masks, fine)
+    # 'a' has 150 data in the region and 250 outside: split; 'b' has only 50 in the region: not split
+    assert sorted(out) == ['a', 'a_fine', 'b']
+    assert np.array_equal(out['a'], ~fine) and np.array_equal(out['a_fine'], fine)
+    assert np.array_equal(out['b'], masks['b'])
+    assert sorted(fgf.fine_sigma_extra_masks(masks, fine, min_size=10)) == ['a', 'a_fine', 'b', 'b_fine']
+    out = fgf.fine_sigma_extra_masks(None, fine)
+    assert sorted(out) == ['all', 'all_fine'] and np.array_equal(out['all_fine'], fine)
+
+
+def test_separate_sigma_extra():
+    # data outside the region have 0.5 m of extra noise: with separate_sigma_extra, the data
+    # in the region (which the fine nodes fit) get their own, smaller, sigma_extra
+    region = shapely.LineString([(-1200, -560), (1200, 160)]).buffer(300)
+    fine_grid_args = {'region': region, 'spacing': 50,
+                      'E_RMS': {'d2z0_dx2': 1.0, 'd3z_dx2dt': 0.3, 'd2z_dt2': 100}}
+    S = {sep: run_fine_fit(fine_grid_args | {'separate_sigma_extra': sep}, noisy_outside=region)
+         for sep in [False, True]}
+    for sep in [False, True]:
+        D = S[sep]['data']
+        assert np.array_equal(D.fine_region > 0, fgf.fine_region_data(D, S[sep]['grids']))
+    # one class without the option ...
+    assert np.unique(S[False]['data'].sigma_extra).size == 1
+    # ... two with it: about 0.5 m outside the region, much less inside
+    D = S[True]['data']
+    fine = D.fine_region > 0
+    assert np.unique(D.sigma_extra[fine]).size == 1 and np.unique(D.sigma_extra[~fine]).size == 1
+    assert 0.4 < D.sigma_extra[~fine][0] < 0.6
+    assert D.sigma_extra[fine][0] < 0.5*D.sigma_extra[~fine][0]

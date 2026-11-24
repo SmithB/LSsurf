@@ -31,7 +31,8 @@ from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.fine_grid_functions import setup_fine_fit, parse_fine_grids, \
                                         setup_fine_total_ops, add_fine_to_averaging_ops, \
-                                        fine_constraint_names, fine_grid_names
+                                        fine_constraint_names, fine_grid_names, \
+                                        fine_region_data, fine_sigma_extra_masks
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
 from LSsurf.calc_sigma_extra import calc_sigma_extra, calc_sigma_extra_on_grid
 from threadpoolctl import threadpool_limits
@@ -655,8 +656,17 @@ def smooth_fit(**kwargs):
 
     # add fine-resolution grids within a region, if requested
     if args['fine_grid_args'] is not None:
-        setup_fine_fit(data, grids, G_data, constraint_op_list, args['fine_grid_args'],
-                       args['reference_epoch'], srs_proj4=args['srs_proj4'])
+        if setup_fine_fit(data, grids, G_data, constraint_op_list, args['fine_grid_args'],
+                          args['reference_epoch'], srs_proj4=args['srs_proj4']):
+            data.assign(fine_region=fine_region_data(data, grids).astype(float))
+            # optionally, the data in the fine region get their own sigma_extra
+            if args['fine_grid_args'].get('separate_sigma_extra', False):
+                args['sigma_extra_masks'] = fine_sigma_extra_masks(args['sigma_extra_masks'], data.fine_region > 0)
+                if args['VERBOSE']:
+                    print('smooth_fit: sigma_extra classes: ' +
+                          ', '.join(f"{key} ({np.sum(ii)})" for key, ii in args['sigma_extra_masks'].items()))
+        else:
+            data.assign(fine_region=np.zeros(data.size))
 
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:

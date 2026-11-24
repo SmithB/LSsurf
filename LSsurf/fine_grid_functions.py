@@ -49,6 +49,18 @@ dict with entries:
         resolution: a dict with 'z0' and 'dz' entries (only those of the refined
         grids are needed), a two-element list, or one number (default: 4 for
         z0_fine, 2 for dz_fine).  smooth_fit itself does not use it.
+    separate_sigma_extra: if True, the data in the fine region (see
+        fine_region_data) get their own sigma_extra: each sigma_extra class
+        (smooth_fit's sigma_extra_masks or sigma_extra_keys, or all the data if
+        neither is given) is split into the data outside the region (same key)
+        and inside it (key + '_fine'), as long as both parts have at least 100
+        data (see fine_sigma_extra_masks).  The fine nodes fit the data in the
+        region more closely, so with one sigma_extra per class, a class whose
+        data are mostly in the region gets a small sigma_extra, and its data
+        outside the region are held to it (and edited).  Default False.
+
+smooth_fit adds the data field fine_region (1 for the data whose model includes
+fine-grid nodes, see fine_region_data, 0 otherwise) whenever fine_grid_args is given.
 
 Error estimates for the fine grids are expensive.  As for the coarse grids
 in altimetryFit, they can be calculated in a separate run with coarser grids
@@ -74,7 +86,8 @@ smooth_fit outputs (in S['m'], and as 'sigma_'+key in S['E'] if errors are calcu
 Provides: read_region, region_node_mask, fine_grid_spacing, fine_grid_names,
     setup_fine_grids, setup_fine_constraints, setup_fine_fit, parse_fine_grids,
     setup_fine_total_ops, add_fine_to_averaging_ops, fine_constraint_names,
-    fine_grid_args_for_errors, fine_errors_to_grid
+    fine_grid_args_for_errors, fine_errors_to_grid, fine_region_data,
+    fine_sigma_extra_masks
 """
 
 import os
@@ -89,7 +102,10 @@ fine_grid_arg_defaults = {'region': None, 'region_file': None, 'region_field': N
                           'region_group': None, 'region_threshold': 0.5,
                           'spacing': None, 'buffer': 0, 'halo': 0,
                           'E_RMS': None, 'add_to_coarse_averages': True,
-                          'error_res_scale': None}
+                          'error_res_scale': None, 'separate_sigma_extra': False}
+
+# smallest part of a sigma_extra class that fine_sigma_extra_masks splits off
+fine_sigma_extra_min_size = 100
 
 # E_RMS keys for the fine-grid constraints
 fine_z0_constraint_keys = ['d2z0_dx2', 'dz0_dx', 'z0']
@@ -468,6 +484,73 @@ def setup_fine_fit(data, grids, G_data, constraint_op_list, fine_grid_args,
                    .restrict_to_active(drop_rows=False))
     setup_fine_constraints(grids, constraint_op_list, args['E_RMS'], halo=args['halo'])
     return True
+
+
+def fine_region_data(data, grids):
+    '''
+    Find the data whose model includes fine-grid nodes
+
+    A datum is in the fine region if its bilinear interpolation weights in x and
+    y include an active node of z0_fine or dz_fine (at any time; the dz_fine
+    nodes at the reference epoch are fixed at zero, but are in the region).
+    These are the data within one fine-node spacing of the region's nodes.
+
+    Parameters
+    ----------
+    data : pointCollection.data
+        data, with fields x and y
+    grids : dict
+        grids of the fit, with 'z0_fine' and/or 'dz_fine' (see setup_fine_grids)
+
+    Returns
+    -------
+    numpy boolean array, True for the data in the fine region
+    '''
+    from scipy.interpolate import RegularGridInterpolator
+    inside = np.zeros(data.size, dtype=bool)
+    for name in ['z0_fine', 'dz_fine']:
+        if name not in grids:
+            continue
+        grid = grids[name]
+        interp = RegularGridInterpolator((grid.ctrs[0], grid.ctrs[1]), grid.region_mask.astype(float),
+                                         bounds_error=False, fill_value=0.)
+        inside |= interp(np.c_[data.y, data.x]) > 0
+    return inside
+
+
+def fine_sigma_extra_masks(sigma_extra_masks, fine, min_size=None):
+    '''
+    Split each sigma_extra class into the data outside and inside the fine region
+
+    Parameters
+    ----------
+    sigma_extra_masks : dict or None
+        boolean data masks of the sigma_extra classes (as in smooth_fit), or
+        None for one class containing all the data ('all')
+    fine : numpy boolean array
+        True for the data in the fine region (fine_region_data)
+    min_size : int, optional
+        a class is split only if both parts have at least this many data
+        (calc_sigma_extra skips classes with fewer than 10 unedited data).  The
+        default is fine_sigma_extra_min_size (100).
+
+    Returns
+    -------
+    dict : the classes, with the data in the region of each split class moved
+        from its key to key + '_fine'
+    '''
+    if min_size is None:
+        min_size = fine_sigma_extra_min_size
+    if sigma_extra_masks is None:
+        sigma_extra_masks = {'all': np.ones(fine.shape, dtype=bool)}
+    out = {}
+    for key, mask in sigma_extra_masks.items():
+        if min(np.sum(mask & fine), np.sum(mask & ~fine)) < min_size:
+            out[key] = mask
+            continue
+        out[key] = mask & ~fine
+        out[key + '_fine'] = mask & fine
+    return out
 
 
 def fine_grid_args_for_errors(fine_grid_args):

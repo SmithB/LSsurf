@@ -23,11 +23,59 @@ def match_range(b0, b1):
     return [ (np.maximum(bi[0], bj[0]), np.minimum(bi[1], bj[1]))\
           for bi, bj in zip(b0, b1) ]
 
+def prior_reference_time(dz, default=None):
+    """
+    Find the reference time of a saved dz model
+
+    A saved dz model is a difference from its reference epoch, m(t) - m(t_ref),
+    so dz (and, if the errors were calculated, sigma_dz) are zero at every node
+    at t_ref.  A constraint from the model, m(t) - m(t_ref) = dz(t), needs the
+    model's own t_ref, which need not be that of the fit being constrained
+    (e.g. a model fit over a different time span with an index reference epoch).
+
+    inputs:
+        pointCollection.grid.data dz: the saved model, with a 'dz' field (and
+            optionally 'sigma_dz') whose third dimension is time
+        float default: time returned if no epoch, or more than one, has dz and
+            sigma_dz equal to zero at every node where dz is finite
+    output:
+        float: the reference time
+    """
+    t = getattr(dz, 'time', None)
+    if t is None:
+        t = getattr(dz, 't', None)
+    if t is None:
+        return default
+    t = np.atleast_1d(np.asarray(t, dtype=float))
+    z = np.asarray(dz.dz, dtype=float)
+    if z.ndim < 3 or z.shape[2] != t.size:
+        return default
+    sigma = np.asarray(dz.sigma_dz, dtype=float) if 'sigma_dz' in dz.fields else None
+    candidates = []
+    for k in range(t.size):
+        zk = z[:, :, k]
+        finite = np.isfinite(zk)
+        if not np.any(finite) or np.any(zk[finite] != 0):
+            continue
+        if sigma is not None:
+            sk = sigma[:, :, k]
+            if np.any(sk[finite & np.isfinite(sk)] != 0):
+                continue
+        candidates += [t[k]]
+    if len(candidates) == 1:
+        return candidates[0]
+    return default
+
 def make_prior_op(grids, dz, src_name, ref_time=0, sigma_scale=1):
 
     if 't' not in dz.fields:
         dz.assign(t=dz.time)
-    dz=dz[dz.t != ref_time]
+    # the reference epoch gives no constraint (dz = 0 there), and points
+    # without a positive, finite error would give invalid constraint equations
+    keep = (dz.t != ref_time) & np.isfinite(dz.dz)
+    if 'sigma_dz' in dz.fields:
+        keep &= np.isfinite(dz.sigma_dz) & (dz.sigma_dz > 0)
+    dz=dz[keep]
     # first matrix interpolates the model to the fit values at the delta-z time
     m1 = lin_op(grids['dz'], name='prior_dz1_'+src_name)\
         .interp_mtx((dz.y, dz.x, dz.t))
@@ -53,7 +101,10 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
         dict grids: dict containing LSsurf.fdgrid objects.  Must include a 'dz' entry
         iterable filenames: h5 filenames from which to read the data
         iterable dzs: pointCollection.grid.data() objects containing height-change data
-        float ref_epoch: Time value to which the saved dz model is referenced
+        int ref_epoch: index of the epoch of each saved dz model to which it is
+            referenced, used only if the reference epoch cannot be found from the
+            model itself (the epoch at which dz and sigma_dz are zero everywhere;
+            see prior_reference_time)
         str group: group in the file in which the dz values are saved (default='dz')
         dict field_mapping: dict mapping between saved fields and fields 'dz and 'sigma_dz'
         dict skip: values to skip in xy and t (one field for each)
@@ -90,7 +141,8 @@ def match_prior_dz(grids, dzs=None, filenames=None, ref_epoch=0, group='dz', fie
         bds = match_range(grids['dz'].bds, (yc+np.array([-1, 1])*(yw/2-edge_pad['xy']),
                                             xc+np.array([-1, 1])*(xw/2-edge_pad['xy']),
                                             tc+np.array([-1, 1])*tw/2))
-        ref_time=dz.t[ref_epoch]
+        # the prior's own reference time (found from the full grid, before cropping)
+        ref_time = prior_reference_time(dz, default=np.atleast_1d(dz.t)[ref_epoch])
 
         dz.crop( bds[1], bds[0], bds[2] )
 
@@ -121,7 +173,10 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
         tile_W (scalar ) : Width of the tiles (default: 8e4)
         tile_spacing (scalar) : distance between tile centers
         edge_include (scalar) : Width of the constraining grids to include at the edges
-        ref_epoch (scalar) : Time value to which the saved dz model is referenced
+        ref_epoch (int) : index of this fit's reference epoch.  Each adjacent
+            tile's constraints use that tile's own reference time (the epoch at
+            which its dz and sigma_dz are zero, see prior_reference_time); this
+            fit's reference time is used only if that epoch can't be found.
         group (str) : group in the file in which the dz values are saved (default='dz')
         field_mapping (dict) : dict mapping between saved fields and fields 'dz and 'sigma_dz'
         sigma_scale (scalar) : value by which to scale the uncertainties in the grid
@@ -180,7 +235,13 @@ def match_tile_edges(grids, ref_epoch, prior_dir=None,
             dz.assign(t=dz.time)
 
         src_name=file
-        ref_time = dz.t[ref_epoch]
+        # the constraint is m(t) - m(t_ref) = dz(t), with the adjacent tile's
+        # reference time: the epoch at which its dz and sigma_dz are zero.  Its
+        # time grid and reference epoch need not be this fit's (e.g. a tile fit
+        # over a longer time span, with an index reference epoch, whose output
+        # was cropped in time).  If the tile's reference epoch can't be found,
+        # assume that it is this fit's.
+        ref_time = prior_reference_time(dz, default=grids['dz'].ctrs[2][ref_epoch])
         for field in ['cell_area','mask']:
             if field in dz.fields:
                 dz.fields.remove(field)

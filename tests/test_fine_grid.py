@@ -122,6 +122,60 @@ def test_fine_constraint_choices(E_RMS):
         assert np.all(op.c >= grid.col_0) and np.all(op.c < grid.col_N)
 
 
+def edge_penalties(key, halo):
+    # constraint key on fine grids with a square region of 7 x 7 nodes, for a field that is uniform in the
+    # region (z0_fine) or has a uniform rate (dz_fine), and is zero outside.  Interior equations are zero
+    # for it, so the penalty comes from equations that reach across an edge; each edge gets the rows
+    # centered on or beyond it, without the corners.  Returns the number of equations and the penalties.
+    N, i0, i1 = 16, 4, 10
+    mask = np.zeros((N, N), bool)
+    mask[i0:i1+1, i0:i1+1] = True
+    z0f = fd_grid([[0, (N-1)*25.], [0, (N-1)*25.]], [25., 25.], name='z0_fine')
+    z0f.set_active_nodes(mask, col_0=0)
+    dzf = fd_grid([[0, (N-1)*25.], [0, (N-1)*25.], [0, 2.]], [25., 25., 0.25], name='dz_fine')
+    fixed = np.zeros(dzf.shape, bool)
+    fixed[:, :, 4] = True
+    dzf.set_active_nodes(mask, fixed=fixed, col_0=z0f.col_N)
+    m = np.ones(dzf.col_N)
+    it = np.unravel_index(np.flatnonzero(dzf.active.ravel()), dzf.shape)[2]
+    m[z0f.col_N:] = dzf.ctrs[2][it] - dzf.ctrs[2][4]
+    ops = []
+    fgf.setup_fine_constraints({'z0_fine': z0f, 'dz_fine': dzf}, ops, {key: 1.}, halo=halo)
+    grid = z0f if key in fgf.fine_z0_constraint_keys else dzf
+    r = ops[0].toCSR(col_N=dzf.col_N).dot(m)
+    iy, ix = np.unravel_index(ops[0].ind0 - grid.col_0, grid.shape)[0:2]
+    in_x, in_y = (ix > i0) & (ix < i1), (iy > i0) & (iy < i1)
+    sides = {'-x': (ix <= i0) & in_y, '+x': (ix >= i1) & in_y, '-y': (iy <= i0) & in_x, '+y': (iy >= i1) & in_x}
+    return ops[0].N_eq, {side: np.sum(r[ii]**2) for side, ii in sides.items()}
+
+
+def test_fine_halo():
+    # gradient constraints: without a halo, only the -x and -y edges are tied to the zero outside;
+    # the default (None) gives them a halo of 1, which ties every edge equally
+    for key in fgf.fine_one_sided_constraint_keys:
+        assert fgf.fine_constraint_halo(key) == 1
+        n0, p0 = edge_penalties(key, 0)
+        assert p0['+x'] == 0 and p0['+y'] == 0 and p0['-x'] > 0 and p0['-y'] > 0
+        n, p = edge_penalties(key, None)
+        assert (n, p) == edge_penalties(key, 1) and n > n0
+        assert all(np.isclose(p[side], p0['-x']) for side in p)
+    # the other constraints keep a halo of 0 by default; the curvature constraints tie every edge
+    # without a halo, and a halo of 1 doubles the edge penalty for this field
+    for key in ['d2z0_dx2', 'z0', 'd3z_dx2dt', 'd2z_dt2', 'dz']:
+        assert fgf.fine_constraint_halo(key) == 0
+        n0, p0 = edge_penalties(key, 0)
+        assert (n0, p0) == edge_penalties(key, None)
+        if key in ['d2z0_dx2', 'd3z_dx2dt']:
+            assert all(p0[side] > 0 and np.isclose(p0[side], p0['-x']) for side in p0)
+            n1, p1 = edge_penalties(key, 1)
+            assert n1 > n0 and all(np.isclose(p1[side], 2*p0[side]) for side in p0)
+    # an integer halo applies to every constraint
+    assert fgf.fine_constraint_halo('d3z_dx2dt', 2) == 2 and fgf.fine_constraint_halo('d2z_dxdt', 0) == 0
+    for bad in [-1, 0.5]:
+        with pytest.raises(ValueError):
+            fgf.fine_constraint_halo('dz0_dx', bad)
+
+
 def test_fine_E_RMS_validation():
     # each fine grid needs at least one constraint, and unknown entries are errors
     grids, region = make_grids()
@@ -242,7 +296,7 @@ def z_true(x, y, t):
     return 20 + 1e-3*x + np.cos(2*np.pi*x/4000)*np.cos(2*np.pi*y/5000) - 0.5*t + rift(x, y, t)
 
 
-def run_fine_fit(fine_grid_args=None, compute_E=False):
+def run_fine_fit(fine_grid_args=None, compute_E=False, noisy_outside=None):
     # DEM-like data over a 4 km x 4 km domain at five times
     D = []
     for t in [0.1, 0.6, 1.1, 1.4, 1.9]:
@@ -250,6 +304,10 @@ def run_fine_fit(fine_grid_args=None, compute_E=False):
         D.append(pc.data().from_dict({'x': xg, 'y': yg, 'time': np.zeros_like(xg)+t, 'sigma': np.zeros_like(xg)+0.2}))
     data = pc.data().from_list(D)
     data.assign(z=z_true(data.x, data.y, data.time) + rng.normal(size=data.size)*data.sigma)
+    if noisy_outside is not None:
+        # 0.5 m of noise that sigma does not include, outside a region
+        out = ~shapely.contains_xy(noisy_outside, data.x, data.y)
+        data.z[out] += rng.normal(size=out.sum())*0.5
     whole = pc.grid.data().from_dict({'x': np.array([-3000., 3000]), 'y': np.array([-3000., 3000]), 'z': np.ones((2, 2))})
     E_RMS = {'d2z0_dx2': 0.02, 'dz0_dx': 50, 'd3z_dx2dt': 0.003, 'd2z_dxdt': 7.5, 'd2z_dt2': 5000}
     return smooth_fit(data=data, ctr={'x': 0., 'y': 0., 't': 1.}, W={'x': 4000., 'y': 4000., 't': 2.},
@@ -284,6 +342,12 @@ def test_fine_fit(spacing, E_RMS_z0):
     m, E, grids = S_f['m'], S_f['E'], S_f['grids']
     for key in ['z0_fine', 'dz_fine', 'z0_total_fine', 'dz_total_fine', 'dzdt_total_fine_lag1']:
         assert key in m and 'sigma_'+key in E
+    # the grids are padded by two nodes beyond the widest constraint halo (by default 1 for gradient constraints)
+    pad = 3 if 'dz0_dx' in E_RMS_z0 else 2
+    for name in ['z0_fine', 'dz_fine']:
+        mask = grids[name].region_mask
+        assert [np.flatnonzero(mask.any(axis=1-dim))[0] for dim in [0, 1]] == [pad, pad]
+        assert [mask.shape[dim] - 1 - np.flatnonzero(mask.any(axis=1-dim))[-1] for dim in [0, 1]] == [pad, pad]
     in_reg = grids['dz_fine'].region_mask
     # dz_fine is zero at the reference epoch in the region, and NaN outside it
     assert np.all(m['dz_fine'].dz_fine[:, :, 4][in_reg] == 0)
@@ -391,3 +455,50 @@ def test_fine_errors_to_grid():
     assert np.allclose(out[inside_coarse], expected[inside_coarse])
     # every valid node gets a value, and the others are NaN
     assert np.all(np.isfinite(out[valid])) and np.all(np.isnan(out[~valid]))
+
+
+def test_fine_region_data():
+    # one active dz_fine node at (200, 200): the data with a nonzero bilinear weight on it are in the region
+    grid = fd_grid([[0., 400.], [0., 400.], [0., 1.]], [100., 100., 0.5], name='dz_fine')
+    mask = np.zeros((5, 5), dtype=bool)
+    mask[2, 2] = True
+    grid.set_active_nodes(mask)
+    D = pc.data().from_dict({'x': np.array([200., 250., 299., 300., 101., 99., 200.]),
+                             'y': np.array([200., 290., 250., 200., 101., 200., 99.])})
+    assert np.array_equal(fgf.fine_region_data(D, {'dz_fine': grid}),
+                          [True, True, True, False, True, False, False])
+    assert not np.any(fgf.fine_region_data(D, {}))
+
+
+def test_fine_sigma_extra_masks():
+    fine = np.r_[np.ones(150, bool), np.zeros(250, bool)]
+    masks = {'a': np.ones(400, bool), 'b': np.r_[np.zeros(100, bool), np.ones(300, bool)]}
+    out = fgf.fine_sigma_extra_masks(masks, fine)
+    # 'a' has 150 data in the region and 250 outside: split; 'b' has only 50 in the region: not split
+    assert sorted(out) == ['a', 'a_fine', 'b']
+    assert np.array_equal(out['a'], ~fine) and np.array_equal(out['a_fine'], fine)
+    assert np.array_equal(out['b'], masks['b'])
+    assert sorted(fgf.fine_sigma_extra_masks(masks, fine, min_size=10)) == ['a', 'a_fine', 'b', 'b_fine']
+    out = fgf.fine_sigma_extra_masks(None, fine)
+    assert sorted(out) == ['all', 'all_fine'] and np.array_equal(out['all_fine'], fine)
+
+
+def test_separate_sigma_extra():
+    # data outside the region have 0.5 m of extra noise: with separate_sigma_extra, the data
+    # in the region (which the fine nodes fit) get their own, smaller, sigma_extra
+    region = shapely.LineString([(-1200, -560), (1200, 160)]).buffer(300)
+    fine_grid_args = {'region': region, 'spacing': 50,
+                      'E_RMS': {'d2z0_dx2': 1.0, 'd3z_dx2dt': 0.3, 'd2z_dt2': 100}}
+    S = {sep: run_fine_fit(fine_grid_args | {'separate_sigma_extra': sep}, noisy_outside=region)
+         for sep in [False, True]}
+    for sep in [False, True]:
+        D = S[sep]['data']
+        assert np.array_equal(D.fine_region > 0, fgf.fine_region_data(D, S[sep]['grids']))
+    # one class without the option ...
+    assert np.unique(S[False]['data'].sigma_extra).size == 1
+    # ... two with it: about 0.5 m outside the region, much less inside
+    D = S[True]['data']
+    fine = D.fine_region > 0
+    assert np.unique(D.sigma_extra[fine]).size == 1 and np.unique(D.sigma_extra[~fine]).size == 1
+    assert 0.4 < D.sigma_extra[~fine][0] < 0.6
+    assert D.sigma_extra[fine][0] < 0.5*D.sigma_extra[~fine][0]

@@ -31,7 +31,8 @@ from LSsurf.constraint_functions import setup_smoothness_constraints, \
                                         build_reference_epoch_matrix
 from LSsurf.fine_grid_functions import setup_fine_fit, parse_fine_grids, \
                                         setup_fine_total_ops, add_fine_to_averaging_ops, \
-                                        fine_constraint_names, fine_grid_names
+                                        fine_constraint_names, fine_grid_names, \
+                                        fine_region_data, fine_sigma_extra_masks
 from LSsurf.match_priors import match_prior_dz,  match_tile_edges
 from LSsurf.calc_sigma_extra import calc_sigma_extra, calc_sigma_extra_on_grid
 from threadpoolctl import threadpool_limits
@@ -69,28 +70,64 @@ def print_TOC(G_data, Gc):
             print(f'\t{name}: {len(np.unique(rr))/1000}K')
     print(f'\t\tSensor constraint total: {N_sensor_rows/1000}K')
 
-def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
+def restore_bias_edits(data, bias_model):
+    '''
+    Mark as edited the biases of the data whose bias_edited field is nonzero
 
-    if args['bias_nsigma_edit'] is None:
+    smooth_fit sets data.bias_edited for the data of the biases edited by
+    edit_by_bias.  Data passed to another fit (a second pass, or data reread
+    from a saved fit) keep the field, so that the new fit starts with the
+    earlier fit's bias edits, whatever the new bias_ID numbers are.
+    '''
+    if 'bias_edited' not in data.fields or 'bias_param_dict' not in bias_model \
+            or 'ID' not in bias_model['bias_param_dict']:
+        return
+    edited_data = np.asarray(data.bias_edited, dtype=float) > 0
+    if not np.any(edited_data):
+        return
+    param_dict = bias_model['bias_param_dict']
+    if 'edited' not in param_dict:
+        param_dict['edited'] = np.zeros_like(param_dict['ID'], dtype=bool)
+    ID_index = {int(ID): ii for ii, ID in enumerate(param_dict['ID'])}
+    for ID in np.unique(data.bias_ID[edited_data]):
+        if int(ID) in ID_index:
+            param_dict['edited'][ID_index[int(ID)]] = True
+
+def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
+    '''
+    Remove the data of edited biases from in_TSE
+
+    Biases marked as edited in bias_model['bias_param_dict']['edited'] (in an
+    earlier iteration, or restored from an earlier fit by restore_bias_edits)
+    stay edited.  If args['bias_nsigma_edit'] is set, then from iteration
+    args['bias_nsigma_iteration'] on, biases larger than bias_nsigma_edit times
+    their expected values are also edited (or, if some are extreme, the largest).
+
+    Returns True if the set of edited biases changed.
+    '''
+    if not bias_model or 'bias_param_dict' not in bias_model:
+        return False
+    param_dict = bias_model['bias_param_dict']
+    if args['bias_nsigma_edit'] is None and 'edited' not in param_dict:
         return False
 
     # assign the edited field in bias_model['bias_param_dict'] if needed
-    if 'edited' not in bias_model['bias_param_dict']:
-            bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
-    bias_dict = parse_biases(m0, bias_model, args['bias_params'])['bias']
-    bias_scaled = np.abs(bias_dict['val']) / np.array(bias_dict['expected'])
+    if 'edited' not in param_dict:
+        param_dict['edited']=np.zeros_like(param_dict['ID'], dtype=bool)
 
-    last_edit = bias_model['bias_param_dict']['edited'].copy()
-    bad_bias = np.zeros_like(bias_scaled, dtype=bool)
-    bad_bias |= last_edit
-    if iteration >= args['bias_nsigma_iteration']:
+    last_edit = param_dict['edited'].copy()
+    bad_bias_IDs = list(np.array(param_dict['ID'])[last_edit])
+    if args['bias_nsigma_edit'] is not None and iteration >= args['bias_nsigma_iteration']:
+        bias_dict = parse_biases(m0, bias_model, args['bias_params'])['bias']
+        bias_scaled = np.abs(bias_dict['val']) / np.array(bias_dict['expected'])
+        bad_bias = np.zeros_like(bias_scaled, dtype=bool)
         extreme_bias_scaled_threshold = np.minimum(50, 3*scoreatpercentile(bias_scaled, 95))
         if np.any(bias_scaled > extreme_bias_scaled_threshold):
             bad_bias[ bias_scaled == np.max(bias_scaled) ] = True
         else:
             bad_bias[bias_scaled > args['bias_nsigma_edit']] = True
-
-    bad_bias_IDs=np.array(bias_dict['ID'])[bad_bias]
+        bad_bias_IDs += list(np.array(bias_dict['ID'])[bad_bias])
+    bad_bias_IDs = np.unique(bad_bias_IDs)
 
     for ID in bad_bias_IDs:
         #Mark each bad ID as edited (because it will have a bias estimate of zero in subsequent iterations)
@@ -105,7 +142,23 @@ def edit_by_bias(data, m0, in_TSE, iteration, bias_model, args):
     return  ~np.all(bias_model['bias_param_dict']['edited'] == last_edit)
 
 def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
-                grids, bias_model=None, sigma_extra_masks=None):
+                grids, bias_model=None, sigma_extra_masks=None, return_n_iterations=False):
+    '''
+    Solve the least-squares problem iteratively, editing the data after each solve
+
+    The iterations are numbered from args['first_iteration'] (default 0), the
+    number of iterations done before this call by an earlier pass of the same
+    fit or by the fit whose data (and edits) are being reused.  Iteration
+    numbers count towards args['bias_nsigma_iteration'] and
+    args['min_iterations'], so that a fit run in several passes edits as one
+    run would.  At most args['max_iterations'] solves are done in this call.
+    If data has a sigma_extra field (from an earlier fit), it is used for
+    the first solve if that is the last one and args['sigma_extra_relax'] is set.
+
+    Returns m0, sigma_extra, in_TSE, rs_data, and, if return_n_iterations,
+    the number of the last iteration done plus one (iterations done, counting
+    from zero, including those before this call).
+    '''
     cov_rows=G_data.N_eq+np.arange(Gc.N_eq)
     E_all = 1/TCinv.diagonal()
 
@@ -121,14 +174,21 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
     else:
         N_editable=data.size
 
-    sigma_extra=np.zeros_like(data.z)
+    if 'sigma_extra' in data.fields:
+        # the extra error of the fit whose edits are being continued
+        sigma_extra=np.nan_to_num(np.asarray(data.sigma_extra, dtype=float))
+    else:
+        sigma_extra=np.zeros_like(data.z)
     N_eq = Gcoo.shape[0]
     last_iteration = (args['max_iterations'] <= 1)
     m0 = np.zeros(Ip_c.shape[0])
     # args['cholmod_cache_ordering']: the iterations change only the rows and
     # their weights, so the first iteration's METIS ordering is reused
     ordering_cache = {} if args['cholmod_cache_ordering'] else None
-    for iteration in range(args['max_iterations']):
+    first_iteration = args.get('first_iteration', 0)
+    n_iterations = first_iteration
+    for iteration in range(first_iteration, first_iteration + args['max_iterations']):
+        n_iterations = iteration + 1
         E2_plus=E_all**2
         if last_iteration and args['sigma_extra_relax']:
             if args['VERBOSE']:
@@ -195,6 +255,8 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
         if not np.any(in_TSE):
             if args['VERBOSE']:
                 print("Edited data empty, returning")
+            if return_n_iterations:
+                return m0, sigma_extra, in_TSE, rs_data, n_iterations
             return m0, sigma_extra, in_TSE, rs_data
 
         # quit if the solution is too similar to the previous solution
@@ -228,9 +290,11 @@ def iterate_fit(data, Gcoo, rhs, TCinv, G_data, Gc, in_TSE, Ip_c, timing, args,
                 if args['VERBOSE']:
                     print("sigma_extra is small, performing one additional iteration", flush=True)
                 last_iteration=True
-        if iteration==args['max_iterations']-2:
+        if iteration==first_iteration+args['max_iterations']-2:
             last_iteration=True
 
+    if return_n_iterations:
+        return m0, sigma_extra, in_TSE, rs_data, n_iterations
     return m0, sigma_extra, in_TSE, rs_data
 
 def calc_and_parse_errors(E, Gcoo, TCinv, rhs, Ip_c, Ip_r, grids, G_data, Gc, avg_ops, bias_model, bias_params,
@@ -449,6 +513,14 @@ def smooth_fit(**kwargs):
     'mask_scale': {0:10,1:1},
     'compute_E':False,
     'max_iterations':10,
+    # number of iterations done by earlier fits that this one continues (e.g. a
+    # first pass, or the fit whose data were reread), so that the iteration
+    # counts for bias_nsigma_iteration and min_iterations include them.  The
+    # earlier fit's edits come with the data: three_sigma_edit, sigma_extra
+    # (used if the first solve is the last, with sigma_extra_relax), and
+    # bias_edited (see restore_bias_edits).  The output 'n_iterations' is the
+    # total number of iterations done
+    'first_iteration':0,
     'min_iterations':2,
     'sigma_extra_relax':False,
     'sigma_extra_bin_spacing':None,
@@ -584,8 +656,17 @@ def smooth_fit(**kwargs):
 
     # add fine-resolution grids within a region, if requested
     if args['fine_grid_args'] is not None:
-        setup_fine_fit(data, grids, G_data, constraint_op_list, args['fine_grid_args'],
-                       args['reference_epoch'], srs_proj4=args['srs_proj4'])
+        if setup_fine_fit(data, grids, G_data, constraint_op_list, args['fine_grid_args'],
+                          args['reference_epoch'], srs_proj4=args['srs_proj4']):
+            data.assign(fine_region=fine_region_data(data, grids).astype(float))
+            # optionally, the data in the fine region get their own sigma_extra
+            if args['fine_grid_args'].get('separate_sigma_extra', False):
+                args['sigma_extra_masks'] = fine_sigma_extra_masks(args['sigma_extra_masks'], data.fine_region > 0)
+                if args['VERBOSE']:
+                    print('smooth_fit: sigma_extra classes: ' +
+                          ', '.join(f"{key} ({np.sum(ii)})" for key, ii in args['sigma_extra_masks'].items()))
+        else:
+            data.assign(fine_region=np.zeros(data.size))
 
     # if bias params are given, create a set of parameters to estimate them
     if args['bias_params'] is not None:
@@ -595,6 +676,8 @@ def smooth_fit(**kwargs):
                        bias_param_name='bias_ID')
         if args['bias_nsigma_edit']:
             bias_model['bias_param_dict']['edited']=np.zeros_like(bias_model['bias_param_dict']['ID'], dtype=bool)
+        # keep the bias edits of an earlier fit of these data (data.bias_edited)
+        restore_bias_edits(data, bias_model)
 
         if args['bias_edit_vals'] is not None:
             edit_bias_list=np.c_[[args['bias_edit_vals'][key] for key in args['bias_edit_vals'].keys()]].T.tolist()
@@ -729,19 +812,28 @@ def smooth_fit(**kwargs):
     # setup operators that take averages of the grid at different scales
     averaging_ops=setup_all_averaging_ops(grids, G_data, args)
 
+    # iterations done, counting those of earlier fits that this one continues
+    n_iterations = args['first_iteration']
     # if we've done any iterations, parse the model and the data residuals
     if args['max_iterations'] > 0:
         tic_iteration=time()
-        m0, sigma_extra, in_TSE, rs_data=iterate_fit(data, Gcoo, rhs, \
+        m0, sigma_extra, in_TSE, rs_data, n_iterations=iterate_fit(data, Gcoo, rhs, \
                                 TCinv, G_data, Gc, in_TSE, Ip_c, timing,
                                 args, grids,\
                                 bias_model=bias_model, \
-                                sigma_extra_masks=args['sigma_extra_masks'])
+                                sigma_extra_masks=args['sigma_extra_masks'],
+                                return_n_iterations=True)
 
         timing['iteration']=time()-tic_iteration
         valid_data[valid_data]=in_TSE
         data.assign({'three_sigma_edit':in_TSE})
         data.assign({'sigma_extra':sigma_extra})
+        if 'edited' in bias_model.get('bias_param_dict', {}):
+            # record the bias edits with the data, so that a fit that continues
+            # this one (restore_bias_edits) starts with them
+            param_dict = bias_model['bias_param_dict']
+            data.assign({'bias_edited':np.isin(data.bias_ID,
+                                               np.array(param_dict['ID'])[param_dict['edited']])})
 
         # report the model-based estimate of the data points
         data.assign({'z_est':np.reshape(G_data.toCSR().dot(m0), data.shape)})
@@ -789,4 +881,4 @@ def smooth_fit(**kwargs):
     TOC=Gc.TOC
     return {'m':m, 'E':E, 'data':data, 'grids':grids, 'valid_data': valid_data, \
             'TOC':TOC,'R':R, 'RMS':RMS, 'timing':timing,'E_RMS':args['E_RMS'], \
-                'dzdt_lags':args['dzdt_lags']}
+                'dzdt_lags':args['dzdt_lags'], 'n_iterations':n_iterations}

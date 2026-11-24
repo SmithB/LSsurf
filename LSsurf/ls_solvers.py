@@ -44,6 +44,15 @@ nnz(L) the ordering had when it was computed, the cache is emptied and the
 next call reorders.  (scikit-sparse 0.5 cannot take a given ordering:
 order='given' silently uses AMD.  Refactorizing an existing factor with a new
 matrix is ~35x slower, so each call builds a new factor.)
+
+Long integers: scikit-sparse runs CHOLMOD's int routines on a matrix with int32
+indices (what scipy gives A'A when it can) and its long routines on one with
+int64 indices.  The int routines raise CholmodOverflowError ("Failed at column
+-1") when the factor would have more entries than an int can count: an AA
+200m_25m_qyr_Lag tile with 274k dz_fine nodes did, one with 159k did not.  The
+cholmod solve then repeats the factorization with int64 indices instead of
+falling back to SPQR, and with an ordering cache, later calls start with them.
+The factor and solution are the same; only the index arrays are twice as big.
 """
 import warnings
 from time import time
@@ -91,6 +100,17 @@ def factor_nnz(N):
     return int(symbfact(N)[0].sum())
 
 
+def long_indices(N):
+    """N (CSC) with int64 indices and indptr, sharing N's data, so that
+    scikit-sparse uses CHOLMOD's long-integer routines.  (The csc constructor
+    would give int32 indices back, so they are set after it.)"""
+    import scipy.sparse as sp
+    M = sp.csc_matrix((N.data, N.indices, N.indptr), shape=N.shape, copy=False)
+    M.indices = M.indices.astype(np.int64)
+    M.indptr = M.indptr.astype(np.int64)
+    return M
+
+
 def solve_spqr(A, b, threads=1):
     """SPQR's QR solve, trying METIS (6) then AMD (5) orderings."""
     for ordering in [6, 5]:
@@ -110,7 +130,7 @@ def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=True, ordering_ca
     dict) keeps the METIS ordering between calls; see the module docstring.
     """
     try:
-        from sksparse.cholmod import CholeskyFactor, CholmodError
+        from sksparse.cholmod import CholeskyFactor, CholmodError, CholmodOverflowError
     except ImportError as e:
         raise ImportError("solver='cholmod' needs scikit-sparse >= 0.5 "
                           "(conda install -c conda-forge scikit-sparse)") from e
@@ -154,37 +174,61 @@ def solve_cholmod(A, b, threads=1, verbose=True, scale_columns=True, ordering_ca
             return y if d is None else d * y
 
         tic = time()
-        try:
-            # a fresh factor every call: refactorizing one is ~35x slower
-            with warnings.catch_warnings():
-                # "nearly singular" is expected (cond ~1e12); rcond is reported
-                warnings.simplefilter('ignore')
-                if p is None:
-                    F = CholeskyFactor(N, order='metis')
-                    if ordering_cache is not None:
-                        # F.perm (METIS, postordered) is a view into F: keep a copy
-                        ordering_cache.clear()
+        # int routines first, then long ones if they overflow (see the module
+        # docstring); a cache that needed the long ones starts with them
+        long_ints = ordering_cache is not None and ordering_cache.get('long_ints', False)
+        N0 = N
+        while True:
+            ix = long_indices if long_ints else (lambda M: M)
+            try:
+                # a fresh factor every call: refactorizing one is ~35x slower
+                with warnings.catch_warnings():
+                    # "nearly singular" is expected (cond ~1e12); rcond is reported
+                    warnings.simplefilter('ignore')
+                    if p is None:
+                        N = ix(N0)
+                        F = CholeskyFactor(N, order='metis')
+                        if ordering_cache is not None:
+                            # F.perm (METIS, postordered) is a view into F: keep a copy
+                            ordering_cache.clear()
+                            # WORKAROUND (see factor_nnz): count nnz(L) without F.nnz,
+                            # which leaks the factor.  Original:
+                            # ordering_cache.update(perm=np.array(F.perm), nnz_L=F.nnz)
+                            # F.perm must be read before F.factorize(): after it, it
+                            # leaks the factor too
+                            perm = np.array(F.perm)
+                            ordering_cache.update(perm=perm, nnz_L=factor_nnz(ix(N[perm][:, perm])))
+                            info['ordering'] = 'new'
+                    else:
+                        N = ix(N0[p][:, p])
+                        # already ordered and postordered: CHOLMOD's postorder is
+                        # the identity, and the factor is the one F.perm gave
+                        F = CholeskyFactor(N, order='postordered')
                         # WORKAROUND (see factor_nnz): count nnz(L) without F.nnz,
                         # which leaks the factor.  Original:
-                        # ordering_cache.update(perm=np.array(F.perm), nnz_L=F.nnz)
-                        # F.perm must be read before F.factorize(): after it, it
-                        # leaks the factor too
-                        perm = np.array(F.perm)
-                        ordering_cache.update(perm=perm, nnz_L=factor_nnz(N[perm][:, perm]))
-                        info['ordering'] = 'new'
-                else:
-                    N = N[p][:, p]
-                    # already ordered and postordered: CHOLMOD's postorder is
-                    # the identity, and the factor is the one F.perm gave
-                    F = CholeskyFactor(N, order='postordered')
-                    # WORKAROUND (see factor_nnz): count nnz(L) without F.nnz,
-                    # which leaks the factor.  Original:
-                    # fill = F.nnz / ordering_cache['nnz_L']
-                    fill = factor_nnz(N) / ordering_cache['nnz_L']
-                    if fill > REORDER_FILL_RATIO:
-                        info['fill_ratio'] = fill
-                        ordering_cache.clear()
-                F.factorize(N)
+                        # fill = F.nnz / ordering_cache['nnz_L']
+                        fill = factor_nnz(N) / ordering_cache['nnz_L']
+                        if fill > REORDER_FILL_RATIO:
+                            info['fill_ratio'] = fill
+                            ordering_cache.clear()
+                    F.factorize(N)
+                    break
+            except CholmodOverflowError as e:
+                if long_ints:
+                    info['reason'] = f'{type(e).__name__}: {e}'
+                    return None, info
+                long_ints = True
+            except CholmodError as e:
+                info['reason'] = f'{type(e).__name__}: {e}'
+                return None, info
+        del N0
+        if long_ints:
+            info['long_ints'] = True
+            if ordering_cache is not None:
+                ordering_cache['long_ints'] = True
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
                 info['rcond'] = F.rcond
                 if not info['rcond'] >= RCOND_MIN:
                     which = "scaled A'A" if scale_columns else "A'A"
@@ -238,6 +282,8 @@ def solve_ls(A, b, threads=1, solver='spqr', verbose=True, scale_columns=True,
             ordering = 'cached ordering, '
         else:
             ordering = ''
+        if info.get('long_ints'):
+            ordering += 'long integers, '
         rcond_label = 'rcond (scaled)' if info['scaled'] else 'rcond'
         print(f"\tcholmod: A'A {info.get('AtA_s', 0):.1f} s, {scaling}{ordering}"
               f"factor+solve {info.get('factor_s', 0):.1f} s, "

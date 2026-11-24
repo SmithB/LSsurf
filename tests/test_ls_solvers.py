@@ -166,6 +166,70 @@ def test_cached_ordering_still_falls_back_when_rank_deficient(capsys):
         np.testing.assert_array_equal(x, solve_spqr(A, b))
 
 
+def overflowing_int_factor(monkeypatch, always=False):
+    """CholeskyFactor that raises CholmodOverflowError, as the real one does on
+    a factor too big for CHOLMOD's int routines, for any matrix without int64
+    indices (or for every matrix); returns the list of index dtypes it saw"""
+    import sksparse.cholmod as cm
+    real = cm.CholeskyFactor
+    seen = []
+
+    def fake(N, *args, **kwargs):
+        seen.append(N.indices.dtype)
+        if always or N.indices.dtype != np.int64:
+            raise cm.CholmodOverflowError('CHOLMOD encountered an integer overflow. (code -3) Failed at column -1.')
+        return real(N, *args, **kwargs)
+    monkeypatch.setattr(cm, 'CholeskyFactor', fake)
+    return seen
+
+
+def test_long_indices_share_data_and_use_long_routines():
+    from sksparse.cholmod import CholeskyFactor
+    A, _ = random_ls()
+    N = (A.T @ A).tocsc()
+    assert N.indices.dtype == np.int32
+    M = ls_solvers.long_indices(N)
+    assert M.indices.dtype == np.int64 and M.indptr.dtype == np.int64
+    assert np.shares_memory(M.data, N.data)
+    assert (M != N).nnz == 0
+    F = CholeskyFactor(M, order='metis')
+    F.factorize(M)
+    assert F.L.indices.dtype == np.int64
+
+
+@pytest.mark.parametrize('cache_ordering', [False, True])
+def test_int_overflow_retries_with_long_integers(monkeypatch, cache_ordering, capsys):
+    seen = overflowing_int_factor(monkeypatch)
+    A, b = random_ls(m=3000, n=800, scale_decades=3, seed=7)
+    cache = {} if cache_ordering else None
+    x, info = ls_solvers.solve_cholmod(A, b, ordering_cache=cache)
+    assert info['long_ints'] and 'reason' not in info
+    assert seen == [np.int32, np.int64]
+    assert rel_diff(x, solve_spqr(A, b)) < 1e-9
+    # later calls: with a cache, straight to the long routines on the cached ordering
+    A1, b1 = edited(A, b, 0)
+    seen.clear()
+    x1 = solve_ls(A1, b1, solver='cholmod', ordering_cache=cache)
+    out = capsys.readouterr().out
+    assert 'long integers' in out and 'FALLING BACK' not in out
+    if cache_ordering:
+        assert seen == [np.int64] and 'cached ordering' in out and cache['long_ints']
+    else:
+        assert seen == [np.int32, np.int64]
+    assert rel_diff(x1, solve_spqr(A1, b1)) < 1e-9
+
+
+def test_long_integer_overflow_still_falls_back(monkeypatch, capsys):
+    seen = overflowing_int_factor(monkeypatch, always=True)
+    A, b = random_ls()
+    x, info = ls_solvers.solve_cholmod(A, b, ordering_cache={})
+    assert x is None and info['reason'].startswith('CholmodOverflowError')
+    assert seen == [np.int32, np.int64]
+    x = solve_ls(A, b, solver='cholmod')
+    assert 'FALLING BACK TO SPQR -- CholmodOverflowError' in capsys.readouterr().out
+    np.testing.assert_array_equal(x, solve_spqr(A, b))
+
+
 def test_missing_scikit_sparse_is_an_error(monkeypatch):
     monkeypatch.setitem(sys.modules, 'sksparse.cholmod', None)
     A, b = random_ls()
